@@ -1,0 +1,31 @@
+
+! 1/3 deg bathymetry data comes with ferret
+use etopo20
+!let mrose = if (rose[d=etopo20] le 0) then rose[d=etopo20]*(-1)
+let mrose = rose[d=etopo20]*(-1)
+let one = rose[d=etopo20]*0+1
+
+set memory/size=100
+
+! load climate model grid
+use G_grid.nc
+set axis/modulo longitude
+
+define grid/x=longitude/y=latitude/z=depth mg
+define grid/x=mrose/y=mrose/z=depth_w hrg
+
+let zw2 = z[gz=depth_w]
+let zw1 = if (k eq 1) then zw2*0 else zw2[k=@shf:-1]
+
+let sfra = if (mrose ge 0 and mrose lt zw2) then one else 0
+let/title="Sub-grid scale fraction" sgfra = sfra[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+
+save/file=sg_bathy_land.nc/k=1/klimits=1:19 sgfra
+
+let sfra = if (mrose ge zw1 and mrose lt zw2) then one else 0
+
+repeat/k=2:18 (save/file=sg_bathy_land.nc/append sgfra)
+
+let sfra = if (mrose ge zw1) then one else 0
+save/file=sg_bathy_land.nc/append/k=19 sgfra
+

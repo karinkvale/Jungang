@@ -1,0 +1,14 @@
+#! /usr/bin/perl -w
+
+use Cwd;
+$Initial_Directory = cwd();
+$Machine_Name = $ENV{"MK_MACHINE_NAME"};
+unless ( $Machine_Name ) { $Machine_Name = `uname -n` }
+unless ( $Machine_Name ) { $Machine_Name = " " }
+chomp $Machine_Name;
+$Machine_Name = lc $Machine_Name;
+$Date = `date`; $Date =~ s/^ //;
+chomp $Date;
+open OUT, ">>machine.log";
+print OUT "Starting  $Machine_Name  $Date  $Initial_Directory\n"; 
+close OUT

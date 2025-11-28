@@ -1,0 +1,147 @@
+#! /usr/bin/perl -w
+
+if ( $ARGV[0] ) { if ( $ARGV[0] eq '-h' ) { print "
+======================================================================
+'qlist' is a perl script which uses pbs 'qstat' and 'pbsnodes' commands 
+to generate a listing of relevant job information. The job identifier, 
+machine name, job status, run time and output directory will be listed. 
+If the directory is long ,the beginning will be truncated. A user name 
+may be provided as an argument in order to get a listing of the users 
+jobs or use a '.' to get a listing of all jobs. If only part of a user 
+name is provided then jobs from any user whose name contains that part 
+will be listed. If no argument is provided,then user name is taken from 
+the environment.
+======================================================================
+\n"; exit } }
+
+$line = "======================================================================\n";
+
+# set required argument for listing all jobs
+$all = ".";
+# get user if not supplied as an argument
+$USER = $ENV { "USER" }; if ( $ARGV[0] ) { $USER = $ARGV[0] }
+# initialize various counters
+$l1 = 6; $l2 = 7; $nj = 0; $nr = 0; $nq = 0; $nuj = 0;
+
+# get all queue information from qstat
+$q = `qstat -f`;
+# create an array of all output from qstat splitting on JobId:
+$q =~ s/\s//g; $q =~ s/JobId://;
+@q = split /JobId:/, $q;
+
+# loop through each job output and look for required variables
+foreach (@q) {
+
+# increment job counter and get JI for this job
+ $nj++; $JI[$nj] = $_; $JI[$nj] =~ s/\..*//;
+# get maximum length of any JI character string
+ if ( $l1 < length($JI[$nj]) && length($JI[$nj]) < 20 ) {
+  $l1 = length($JI[$nj]) 
+ } 
+
+# initialize all other required variables for this job
+ $EH[$nj] = " "; $OP[$nj] = " "; $U[$nj] = " "; $S[$nj] = " "; $ET[$nj] = " ";
+
+# get EH for this job
+ if ( /exec_host=/) {
+  $EH[$nj] = $_; $EH[$nj] =~ s/.*exec_host=//; $EH[$nj] =~ s/\/.*//;
+# get maximum string length of any EH character string
+  if ( $l2 < length($EH[$nj]) ) { $l2 = length($EH[$nj]) }
+ }
+
+# get OP for this job 
+ if ( /Output_Path=/) {
+  $OP[$nj] = $_; $OP[$nj] =~ s/.*Output_Path=//; $OP[$nj] =~ s/Priority=.*//;
+  $OP[$nj] =~ s/.*\://; $OP[$nj] = reverse( $OP[$nj] ); $OP[$nj] =~ s/\//:/; 
+  $OP[$nj] = reverse( $OP[$nj] ); $OP[$nj] =~ s/\:.*/\//; 
+ }
+ 
+# get U for this job
+ if ( /Job_Owner=/) {
+  $U[$nj] = $_; $U[$nj] =~ s/.*Job_Owner=//; $U[$nj] =~ s/@.*//;
+# increment number user job counter if this job belongs to user or all
+  if ( $USER eq $all || index ( $U[$nj], $USER ) > -1 ) { $nuj++ } 
+ }
+
+# get S for this job
+ if ( /job_state=/) {
+  $S[$nj] = $_; $S[$nj] =~ s/.*job_state=//; $S[$nj] =~ s/queue.*//;
+# increment appropriate counters
+  if ($S[$nj] eq "R" ) { $nr++ }; if ($S[$nj] eq "Q" ) { $nq++ }
+ }
+
+# get ET for this job
+ if ( /resources_used.cput=/) {
+  $ET[$nj] = $_; $ET[$nj] =~ s/.*resources_used.cput=//; $ET[$nj] =~ s/resources.*//;
+ }
+  
+}
+
+# if there are jobs to be displayed
+if ( $nuj != 0 ) {
+
+# increment the spacing for JI and EH by 1
+ $l1 = $l1+1; $l2 = $l2 + 1;
+# print headings
+ printf ("%-${l1}s %-${l2}s %-2s %-8s %-s\n", "Job ID", "Machine", "S", "Run Time", " Directory");
+
+# loop through all jobs
+ $lu = "";
+ $last = "";
+ for $n ( 1 .. $nj ) {
+
+# if this is a job that should be displayed
+  if ( $USER eq $all || index ( $U[$n], $USER ) > -1 ) {
+
+   if ( $U[$n] ne $lu) { print $line; $last = "" }
+   $lu = $U[$n];
+
+   $y = "";
+#  if a pr file exists find year
+   if ( -e "$OP[$n]/pr" ) {
+#   look for year in the last 100 lines of the file
+    $y = `tail -100  $OP[$n]/pr`; 
+#   get year out of the line
+    $y =~ s/\n//g;
+    if ( index ( $y, "ts=" ) > -1 ) { 
+     $y =~ s/.*ts=//g; $y =~ s/h.*//g; $y =~ s/.*\///;$y =~ s/,//; $y =~ s/ //g;
+    }
+    else { $y = "" }
+   }
+
+   $offset = 0;
+   $maxlen = 60;
+   if ( length($OP[$n]) > $maxlen ) { 
+    $OP[$n] =~ s/.*\/home\/$U[$n]/\~$U[$n]/;
+    if ( length($OP[$n]) > $maxlen ) { 
+     $offset = length($OP[$n]) - $maxlen
+    }
+   }
+   if ( $offset < 0 ) { $offset = 0 }
+   $OP[$n] = substr $OP[$n], $offset;
+#  add year on to the end of the OP variable
+   $OP[$n] = $OP[$n]."  ".$y;
+   if ( $offset > 0 ) { $OP[$n] = "...".$OP[$n]}
+#  print job variables
+   printf "%-${l1}s %-${l2}s %-2s %-9s %-s\n", $JI[$n], $EH[$n], $S[$n], $ET[$n], $OP[$n];
+   $last = $EH[$n]
+
+  }
+  
+ }
+ print $line;
+
+}
+
+# get node information from pbsnodes
+$n = `pbsnodes -a`;
+# create an array of all output lines from pbsnodes
+@n = split /\n/, $n;
+# count the number of free nodes in the output
+$nf = 0; foreach (@n) { if ( /state = free/ ) { $nf++ } }
+
+# get local time and set it to T
+$T = scalar localtime(time);
+
+# print time, number of running jobs, queued jobs and free machines
+print "system: $T: running: $nr, queued: $nq, free: $nf\n";

@@ -1,0 +1,11 @@
+ ! NOAA/PMEL TMAP
+ ! FERRET v6.82  
+ ! Linux 2.6.32-279.1.1.el6.x86_64 64-bit - 08/03/12
+ !  6-Aug-19 13:00     
+
+go make_plastic_flx_input.jnl
+sha scale
+sha scale[l=1]
+sha scale[l=1,k=1]
+sho da
+exit

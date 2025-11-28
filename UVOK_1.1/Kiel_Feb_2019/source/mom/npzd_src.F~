@@ -1,0 +1,2026 @@
+      subroutine npzd_ini
+
+#include "size.h"
+#include "param.h"
+#include "pconst.h"
+#include "stdunits.h"
+#include "accel.h"
+#include "calendar.h"
+#include "coord.h"
+#include "grdvar.h"
+#include "index.h"
+#include "iounit.h"
+#include "levind.h"
+#include "mw.h"
+#include "scalar.h"
+#include "stab.h"
+#include "state.h"
+#include "switch.h"
+#include "tmngr.h"
+#include "vmixc.h"
+# if defined O_npzd
+#include "npzd.h"
+# endif
+      real tmpij(imtm2,jmtm2)
+# if defined O_npzd_fe_limitation || defined O_kk_si
+      real tmpijkm(1:100,1:100,1:3,1:12)
+# endif
+# if defined O_npzd_iron || defined O_kk_si
+      real tmpijk1(1:100,1:100,1:19)
+# endif
+# if defined O_kk_diat && !defined O_kk_si
+      real tmpijk(1:100,1:100,1:19)
+# endif
+
+      character (120) :: fname, new_file_name, logfile
+
+      integer ie, is, je, js, i, ioun, j, jrow, n, m, indp, ip, k, kr
+      integer jq, mask, kz, nv, ke, ks, iou, isle
+
+      integer ib(10), ic(10)
+
+      logical error, vmixset, hmixset, exists, inqvardef
+
+      real snapint, snapls, snaple, snapde, trajint, cksum, checksum
+      real ocnp, boxat, boxau, dvolt, dvolu, sum, pctocn, diffa, amix
+      real runstep, dtatms, ahbkg, spnep, senep, c1e3, c1e9
+
+      c1e3 = 1000.
+      c1e9 = 1.e9
+# if defined O_npzd
+!     convert units of NPZD parameters to MOM units
+      redctn = redctn*1.e-3
+      redotn = redotn*1.e-3
+      redotp = redotn/redptn
+      redctp = redctn/redptn
+      redntp = 1./redptn
+      k1p   = k1n*redptn
+      kw = kw*1.e-2
+      kc = kc*1.e-2
+      ki = ki*1.e-2
+      wd0 = wd0*1.e2
+# if defined O_plastic
+      wmp0 = wmp0*1.e2
+# endif
+# if defined O_zoop_det
+      wdz0 = wdz0*1.e2
+# endif
+      alpha = alpha/daylen
+      alpha_D = alpha_D/daylen
+# if defined O_npzd_iron
+      kfeorg = kfeorg/daylen
+#  if defined O_kk_caco3tr
+      kfeorg_ca = kfeorg_ca/daylen
+#  endif
+      kfecol = kfecol/daylen
+      alphamax = alphamax/daylen
+      alphamin = alphamin/daylen
+# endif
+#  if defined O_cal_kk
+      k1p_C  = k1n_C*redptn
+      alpha_C = alpha_C/daylen
+      abioc = abioc/daylen
+      nuc = nuc/daylen
+      nuct0 = nuct0/daylen
+#  endif
+#  if defined O_kk_caco3tr
+      wc0 = wc0*1.e2
+      kc_c = kc_c*1.e-2
+      dissk0 = dissk0/daylen
+#  endif
+#  if defined O_kk_diat
+      k1p_Diat  = k1n_Diat*redptn
+      alpha_Diat = alpha_Diat/daylen
+      abiodiat = abiodiat/daylen
+      nu_diat = nu_diat/daylen
+      nudt0 = nudt0/daylen
+#  endif
+#  if defined O_kk_si
+      ws0 = (ws0*1.e2)/daylen
+#  endif
+      abio = abio/daylen
+      nup = nup/daylen
+      nupt0 = nupt0/daylen
+      gbio0 = gbio0/daylen
+      nuz = nuz/daylen
+      nud0 = nud0/daylen
+!     calculate sinking speed of detritus divided by grid width
+      do k=1,km
+# if defined O_kk_caco3tr
+!      calcite sinking speed
+        wc(k) = (wc0+wdc*zt(k))/daylen/dzt(k)    ! [s-1]
+# endif
+!       linear increase wd0-200m with depth
+        wd(k) = (wd0+wdd*zt(k))/daylen/dzt(k)  ! [s-1]
+# if defined O_plastic
+!uniform plastic rising rates (for now)
+        wmp(k) = wmp0/dzt(k)   ![s-1]
+# endif
+# if defined O_zoop_det
+        wdz(k) = (wdz0+wdd*zt(k))/daylen/dzt(k)  ! [s-1]
+# endif
+! Note that the above equation has been modified from the original
+! one which was wd(k) = (wd0+4.0e-2*zt(k))/daylen/dzt(k).
+        rkwz(k) = 1./(kw*dzt(k))
+      enddo
+! Note that the following is a bug correction that fixes the
+! level of light that the upper ocean recieves. The original
+! code was ztt(k) = -zt(k)+ dzt(k)/2. and resulted in too
+! much light at the surface because ztt(1) did not equal 0.
+      ztt(1)=0.0
+      do k=1,km-1
+         ztt(k+1)=(-1)*zw(k)
+      enddo
+
+# if defined O_npzd_fe_limitation
+      do k=km,1,-1
+         if (zw(k) .gt. 24000) kmfe = k-1
+      enddo
+#  ifndef O_TMM      
+! read in the dissolved Fe conc from O_dissolved_fe.nc
+      fe_dissolved(:,:,:,:) = 0.
+      ib(:) = 1
+      ic(:) = imtm2
+      ic(2) = jmtm2
+      ic(3) = kmfe
+      ic(4) = 12
+
+      fname = new_file_name ("O_fe_dissolved.nc")
+      inquire (file=trim(fname), exist=exists)
+      if (exists) then
+         c1e9 = 1000000000
+         call openfile (trim(fname), iou)
+         call getvara ('O_dissolved_fe', iou, ic(1)*ic(2)*ic(3)*ic(4)
+     &,                 ib, ic, tmpijkm, c1e9, c0)
+         fe_dissolved(2:imtm1,2:jmtm1,1:kmfe,:) = tmpijkm(1:imtm2
+     &,                                            1:jmtm2,1:kmfe,:)
+         do m=1,12
+            do k=1,kmfe
+               do j=1,jmt
+                  fe_dissolved(1,j,k,m) = fe_dissolved(imtm1,j,k,m)
+                  fe_dissolved(imt,j,k,m) = fe_dissolved(2,j,k,m)
+               enddo
+               do i=1,imt
+                  fe_dissolved(i,1,k,m) = fe_dissolved(i,2,k,m)
+                  fe_dissolved(i,jmt,k,m) = fe_dissolved(i,jmtm1,k,m)
+               enddo
+            enddo
+         enddo
+      else
+         print*,"Warning => Cannot find", trim(fname)
+      endif
+#  endif ! O_TMM      
+# endif
+# ifndef O_TMM
+#  if defined O_npzd_iron
+! read in iron hydrothermal input file as annual average mask
+! Note the conversion from mol/m^3/s to mmol/m^3/s
+      fe_hydr(:,:,:) = 0.
+      ib(:) = 1
+      ic(:) = imtm2
+      ic(2) = jmtm2
+      ic(3) = km
+
+      fname = new_file_name ("O_fe_hydr.nc")
+      inquire (file=trim(fname), exist=exists)
+      if (exists) then
+        call openfile (trim(fname), iou)
+        call getvara ('O_fe_hydr', iou, ic(1)*ic(2)*ic(3)
+     &,                 ib, ic, tmpijk1, c1e3, c0) 
+        fe_hydr(2:imtm1,2:jmtm1,:) = tmpijk1(1:imtm2,1:jmtm2,:)
+        do k=1,km
+          do j=1,jmt
+            fe_hydr(1,j,k) = fe_hydr(imtm1,j,k)
+            fe_hydr(imt,j,k) = fe_hydr(2,j,k)
+          enddo
+          do i=1,imt
+            fe_hydr(i,1,k) = fe_hydr(i,2,k)
+            fe_hydr(i,jmt,k) = fe_hydr(i,jmtm1,k)
+          enddo
+        enddo
+      else
+        print*,"Warning => Cannot find" , trim(fname)
+      endif      
+#  endif
+#  if defined O_kk_si
+! read in Silicate hydrothermal input file as annual average mask
+! read in as mol Si per m^3 per sec 
+      si_hydr(:,:,:) = 0.
+      ib(:) = 1
+      ic(:) = imtm2
+      ic(2) = jmtm2
+      ic(3) = km
+
+      fname = new_file_name ("O_si_hydr.nc")
+      inquire (file=trim(fname), exist=exists)
+      if (exists) then
+        call openfile (trim(fname), iou)
+        call getvara ('O_SIL_HYDR', iou, ic(1)*ic(2)*ic(3)
+     &,                 ib, ic, tmpijk1, c1, c0)
+        si_hydr(2:imtm1,2:jmtm1,:) = tmpijk1(1:imtm2,1:jmtm2,:)
+         where (si_hydr(:,:,:) .lt. -1.e30)
+           si_hydr(:,:,:) = 0.0
+         endwhere
+        do k=1,km
+          do j=1,jmt
+            si_hydr(1,j,k) = si_hydr(imtm1,j,k)
+            si_hydr(imt,j,k) = si_hydr(2,j,k)
+          enddo
+          do i=1,imt
+            si_hydr(i,1,k) = si_hydr(i,2,k)
+            si_hydr(i,jmt,k) = si_hydr(i,jmtm1,k)
+          enddo
+        enddo
+      else
+        print*,"Warning => Cannot find" , trim(fname)
+      endif      
+#  endif
+# endif
+# ifndef O_TMM
+#  if defined O_kk_diat && !defined O_kk_si
+! read in Silica restart file as annual average mask not tracer
+      si_msk(:,:,:) = 0.
+      ib(:) = 1
+      ic(:) = imtm2
+      ic(2) = jmtm2
+      ic(3) = km
+
+      fname = new_file_name ("O_silica.nc")
+      inquire (file=trim(fname), exist=exists)
+      if (exists) then
+        call openfile (trim(fname), iou)
+        call getvara ('O_silica', iou, ic(1)*ic(2)*ic(3)
+     &,                 ib, ic, tmpijk, c1, c0) !mol Si/m^3
+        si_msk(2:imtm1,2:jmtm1,:) = tmpijk(1:imtm2,1:jmtm2,:)
+! KK remove bad values
+        where (si_msk(:,:,:) .gt. 1.e30)
+          si_msk(:,:,:) = 0.0
+        endwhere
+        do k=1,km
+          do j=1,jmt
+            si_msk(1,j,k) = si_msk(imtm1,j,k)
+            si_msk(imt,j,k) = si_msk(2,j,k)
+          enddo
+          do i=1,imt
+            si_msk(i,1,k) = si_msk(i,2,k)
+            si_msk(i,jmt,k) = si_msk(2,j,k)
+          enddo
+        enddo
+      else
+        print*,"Warning => Cannot find" , trim(fname)
+      endif      
+#  endif
+# endif !not O_TMM
+#  if defined O_kk_si
+!---------------------------------------------------------------------
+!     calculate variables used in Opal remineralization
+!---------------------------------------------------------------------      
+!     Test a few options. All ropk(k) unitless. From
+!     HAMOCC5 (Aumont et al. 2003 from Maier-Reimer et al. 1993)
+      ropk(1) = -(exp(-zw(1)/dopal)-1.0)
+      do k=2,km
+        ropk(k) = -(exp(-zw(k)/dopal)) + (exp(-zw(k-1)/dopal))
+      enddo        
+#  endif   
+#  if defined O_carbon || defined O_npzd_alk
+
+!---------------------------------------------------------------------
+!     calculate variables used in calcite remineralization
+!---------------------------------------------------------------------
+
+      rcak(1) = -(exp(-zw(1)/dcaco3)-1.0)/dzt(1)
+      rcab(1) = 1./dzt(1)
+      do k=2,km
+        rcak(k) = -(exp(-zw(k)/dcaco3))/dzt(k)
+     &          + (exp(-zw(k-1)/dcaco3))/dzt(k)
+        rcab(k) = (exp(-zw(k-1)/dcaco3))/dzt(k)
+      enddo
+#  endif
+# endif
+
+      end
+
+      subroutine npzd_src (bioin, ntsb, tsb, gl, bct, impo, dzt
+     &,                    dayfrac, wwd, gbio
+#if defined O_plastic
+     &,                    agg_con, poo_con,expompout_a,impomp_a
+     &,                    expompout_p,impomp_p,agg_uptout,zoop_uptout
+     &,                    agg_relout, zoop_relout
+#endif
+#if defined O_zoop_det
+     &,                    wwdz, remizout, expozout, impoz
+#endif
+     &,                    rkw, nud, bioout, expoout
+     &,                    grazout, morpout, morzout, graz_Det_out
+     &,                    graz_Zout
+#if defined O_save_npzd
+     &,                    nppout, morptout, remiout, excrout
+#  if defined O_kk_ballast
+     &,                    impo_B, expoout_B, remiout_B, graz_Det_out_B
+#  endif
+# if defined O_npzd_nitrogen 
+#  if !defined O_npzd_simple
+     &,                    npp_Dout, graz_Dout, morp_Dout
+#  endif
+     &,                    nfixout
+# endif
+#  if defined O_cal_kk
+     &,                    npp_Cout, morpt_Cout,graz_Cout
+     &,                    morp_Cout
+#   if defined O_npzd_fe_limitation
+     &,                    felimit_C
+#   endif 
+#   if defined O_npzd_iron
+     &,                    thetamaxout_C, deffeout_C
+#   endif
+#  endif
+#  if defined O_kk_diat
+     &,                    npp_Diatout, morpt_Diatout,graz_Diatout
+     &,                    morp_Diatout
+#   if defined O_npzd_fe_limitation
+     &,                    felimit_Diat
+#   endif
+#   if defined O_npzd_iron
+     &,                    thetamaxout_Diat, deffeout_Diat
+#   endif
+     &,                    biosi
+#  endif
+#  if defined O_kk_caco3tr
+     &,                    impocaco3, wwc, expocaco3out, disslout
+     &,                    calproout
+     &,                    calattout,dissk1
+#  endif
+# if defined O_npzd_extra_diagnostics
+     &,                    avej_out, avej_D_out, gmax_out, no3P_out
+     &,                    po4P_out, po4_D_out
+# endif
+#endif
+#if defined O_npzd_fe_limitation
+     &,                    felimit, felimit_D
+#endif
+     &,                    bctz
+#if defined O_npzd_iron
+     &,                    expofeout, impofe, remifeout
+# if defined O_npzd_iron_diagnostics
+     &,                    feorgadsout, thetamaxout, deffeout
+     &,                    feprimeout, fecolout
+#  if defined O_kk_caco3tr
+     &,                    feorgadsout_ca
+#  endif
+# endif
+     &,                    o2
+# if defined O_npzd_chl
+     &,                    chlout, thetachlout
+#  if defined O_npzd_nitrogen
+     &,                    chl_D_out
+#  endif
+# endif
+#endif
+#if defined O_isotopes
+     &,                    rtdic13, rtcaco3c13, rcaco3c13impo
+     &,                    rcaco3c13expoout, rc13expoout, rc13impo
+     &,                    fcnpp, rn15expoout, rn15impo, biosi30
+     &,                    eps_assim, eps_excr, eps_nfix, rtdiats30
+#endif
+     &                     ) 
+
+#if defined O_mom && defined O_npzd 
+!=======================================================================
+!     computes source terms of the NPZD model
+!     initial version of code adapted from Xavier Giraud:
+!     Giraud et al. 2000, J Mar Res, 58, 609-630
+!     original model reference:
+!     Oeschlies and Garcon 1999, Global Biogeochem. Cycles 13, 135-160
+!     Schmittner et al. 2005,  Global Biogeochem. Cycles 19, GB3004,
+!     doi:10.1029/2004GB002283.
+!     Schmittner et al. 2008, Global Biogeochem. Cycles 22, GB1013
+!
+!     This version was modified by David Keller and corrects the zooplankton
+!     grazing formulation.  Note that zooplankton are now allowed to graze
+!     on themselves and detritus, in addition to phyt. and diazotrophs.
+!     The calculation of light has also been corrected.
+!
+!     Note that nutrient now represents phosphate
+
+!     input variables:
+
+!       bioin(1:4) = N,P,Z,D [mmol m-3]
+!       bioin(5)   = nitrate [mmol m-3]
+!       bioin(6)   = diazotrophs [mmol m-3]
+# if defined O_npzd_iron
+!       bioin(7)   = dissolved iron [mmol m-3]
+!       bioin(8)   = particulate iron [mmol m-3]
+# endif
+# if defined O_cal_kk
+!       bioin(7)   = coccolithophores [mmol m-3]
+# endif
+# if defined O_kk_caco3tr
+!       bioin(8)   = calcite [mmol C m-3]
+# endif
+!       gl         = 2.*light at top of grid box
+!       ntsb       = number of time steps
+!       tsb        = time step [s]
+!       bct        = bbio**(cbio*temperature)
+!       impo       = import of detritus from above [mmol m-3]
+!       dzt        = depth of grid box [cm]
+!       dayfrac    = day length (fraction: 0 < dayfrac < 1)
+!       wwd        = sinking speed of detritus/dzt
+!       wwdz        = sinking speed of poo/dzt
+!       rkw        = reciprical of kw*dzt(k)
+!       nud        = remineralisation rate of detritus [s-1]
+
+!     output variables:
+
+!       bioout     = change from bioin [mmol m-3]
+!       nppout     = net primary production [mmol m-3]
+!       grazout    = grazing [mmol m-3]
+!       morpout    = quadratic mortality of phytoplankton [mmol m-3]
+!       morptout   = specific mortality of phytoplankton [mmol m-3]
+!       morzout    = mortality of zooplankton [mmol m-3]
+!       remiout    = remineralisation [mmol m-3]
+!       excrout    = excretion [mmol m-3]
+!       expoout    = detrital export [mmol m-3]
+!       npp_Dout   = NPP of diazotrophs
+!       graz_Dout  = grazing of diazotrophs
+!       morp_Dout  = mortality of diazotrophs
+!       nfixout    = rate of N2 fixation
+!       graz_Det_out = grazing of detritus
+!       graz_Zout   = grazing on othe zooplankton
+!       avej_out    = light-depend phyt. growth rate
+!       avej_D_out  = light-depend Diaz growth rate
+!       gmax_out    = temp-depend. zoo growth rate
+!       no3P_out    = no3 depend. phyt growth rate
+!       po4P_out    = po4 depend. phyt growth rate
+!       po4_D_out   = po4 depend. Diaz growth rate
+
+!      New grazing formulation variables and parameters
+
+!       The following terms determine ingestion according to a
+!       a Holling II curve (i.e. Michaelis Menten):
+!
+!       Ingestion = max_graz_rate * (Ft/(Ft + kzoo))
+!
+!       where Ft is the weighted measure of the total food available
+!       and equals the sum of the different prey types times the
+!       preference of Z for that type of prey 
+!
+!       zprefP   = Z preference for P
+!       zprefMP   = Z preference for MP
+!       zprefDiaz   = Z preference for Diaz
+!       zprefDet = Z preference for detritus
+!       zprefZ   = Z preference for other Z
+!       kzoo = half saturation coefficienct for Z ingestion mmol N m-3
+!       ing_P    = zooplankton ingestion of phytoplankon
+!       ing_D    = zooplankton ingestion of diazotrophs
+!       ing_Det  = zooplankton ingestion of detritus
+!       ing_Z    = zooplankton ingestion of other zooplankton
+!       thetaZ   = Michaelis-Menten denominator
+# if defined O_npzd_fe_limitation
+!       felimit = Fe limitation parameter
+!       felmit_D = Fe limitation parameter for diazotrophs
+# endif
+!=======================================================================
+
+      implicit none
+
+      integer n, ntsb
+
+      real gl, f1, bion, biop, bioz, biod, jmax, u_P, g_P, npp, graz
+      real morp, morpt, morz, remi, excr, expo, impo, nppout, grazout
+      real morpout, morptout, morzout, remiout, excrout, expoout, tsb
+      real avej_out, gmax_out, no3P_out, po4P_out 
+      real dzt, nflag, pflag, zflag, dflag, wwd, rkw, gd, dayfrac, bct
+      real nupt, nud, biono3, no3flag, no3upt_D
+# if !defined O_npzd_simple
+      real biodiaz, morp_Dout, graz_Dout,npp_D, npp_Dout, u_D,avej_D_out
+      real po4_D_out, po4_D
+      real diazflag, g_D,graz_D, morp_D, jmax_D, gd_D, avej_D
+# endif
+      real nfixout, u1, u2, phi1, phi2
+      real avej, graz_Det_out, graz_Zout, thetaZ, ing_P, ing_D
+      real ing_Det, ing_Z, g_Z, g_Det, graz_Z, graz_Det, gmax
+      real no3P, po4P, bctz, gbio
+# if defined O_plastic
+      real agg_upt, agg_rel,agg_uptout,zoop_uptout, agg_relout
+      real agg_con, poo_con, biomp_a, mar_snow, zoop_relout
+      real biomp_p, mpaflag, mppflag, ing_MP, g_MP, graz_MP
+      real biomp, mpflag, impomp_a,expomp_a,expompout_a
+      real impomp_p, expomp_p, expompout_p, zoop_upt, zoop_rel
+# endif
+# if defined O_zoop_det
+      real wwdz, biodz, expoz, expozout
+      real impoz, remiz, remizout, dzflag
+# endif
+# if defined O_npzd_fe_limitation
+      real felimit, felimit_D      
+# endif 
+# if defined O_npzd_iron     
+      real biodfe, biodetrfe, dfeflag, detrfeflag
+      real expofe, impofe, feorgads, remife, thetamax, deffe, fepa
+      real thetamax_D, deffe_D, thetachl, thetachl_D, chl, feprime
+      real fecol, irrtop, kirr, aveirr, fesed, gl_O, gl_D
+      real p1,p2,kfevar
+      real expofeout, impofeout, feorgadsout, fecolout
+      real remifeout, thetamaxout, deffeout, thetachlout
+      real chlout, feprimeout, o2, chl_D_out
+#  if defined O_kk_caco3tr
+      real feorgads_ca, feorgadsout_ca
+#  endif
+# endif
+# if defined O_kk_ballast
+      real expo_B, impo_B, remi_B, remiout_B, expoout_B, dflag_B
+      real graz_Det_out_B, graz_Det_B, g_Det_B, biod_B
+      real graz_Z_B, graz_C_B, morp_C_B, morz_B
+#   if defined O_kk_caco3dissl
+      real delcaco3
+#   endif
+# endif
+# if defined O_isotopes
+      real rcaco3c13impo, rcaco3c13expoout, biocaco3c13, caco3c13flag
+      real rtcaco3c13, rtdic13, rc13expoout, rc13impo
+      real rtphytc13,rtcoccc13,rtdiazc13,rtzoopc13,rtdiatc13
+      real rtdetrc13, fcnpp, biosi30, rtdiats30
+      real biodic13, biophytc13, biodiazc13, biozoopc13, biococcc13
+      real biodiatc13, biodetrc13, biodetrn15
+      real rn15impo, rn15expoout, biodin15, biophytn15, biodiazn15
+      real biozoopn15, biococcn15, biodiatn15, biodiats30
+      real rtdin15, rtphytn15, rtcoccn15, rtzoopn15, rtdiazn15
+      real rtdiatn15, rtdetrn15, uno3, rno3, bassim, fcassim, rzoop
+      real bexcr, bnfix, fcnfix,eps_nfix, eps_excr, eps_assim, fcexcr
+      real usil, rsil, bassimsi, fcassimsi, eps_assim_si
+# endif
+# if defined O_kk_diat
+      real biodiat,jmax_Diat,u_Diat,avej_Diat,gd_Diat,npp_Diat
+      real npp_Diatout,morp_Diat,morpt_Diat, biosi, gl_Diat
+      real nudt,g_Diat,diatflag,graz_Diat,graz_Diatout,morp_Diatout
+      real morpt_Diatout, ing_Diat, felimit_Diat
+#  if defined O_npzd_iron
+      real p1_Diat, p2_Diat, thetamaxout_Diat
+      real thetamax_Diat, deffe_Diat
+      real deffeout_Diat, thetachl_Diat
+#  endif
+# endif
+# if defined O_cal_kk
+      real bioc,jmax_C,u_C,avej_C,gd_C,npp_C,npp_Cout,morp_C,morpt_C
+      real nuct,g_C,bioc2,cflag,graz_C,graz_Cout,morp_Cout
+      real morpt_Cout, ing_C, felimit_C, gl_C
+#  if defined O_npzd_iron
+      real p1_C, p2_C, thetamaxout_C, thetamax_C, deffe_C
+      real deffeout_C, thetachl_C
+#  endif
+# endif
+# if defined O_kk_caco3tr
+      real caco3flag, wwc,expocaco3
+      real expocaco3out,calpro,calproout
+      real biocaco3, impocaco3, dissk1, dissl, disslout
+      real calatt,calattout
+# endif
+
+#include "size.h"
+#include "param.h"
+#include "pconst.h"
+#include "stdunits.h"
+#include "calendar.h"
+#include "npzd.h"
+
+      real bioin(ntnpzd), bioout(ntnpzd)
+
+# if defined O_npzd_iron
+      p1=min(max(trcmin,bioin(ibiop)),pmax)
+      p2=max(0.0,max(trcmin,bioin(ibiop))-pmax)
+#  if defined O_cal_kk || defined O_kk_diat
+      kfevar = kfe
+#  else
+      kfevar=(kfemin*p1+kfemax*p2)/(p1+p2) 
+#  endif
+      deffe=max(trcmin,bioin(ibiodfe))
+     &/(kfevar+max(trcmin,bioin(ibiodfe)))
+      thetamax=thetamaxlo+(thetamaxhi-thetamaxlo)*deffe
+      alpha=alphamin+(alphamax-alphamin)*deffe
+      gl_O=gl*thetamax*alpha 
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+      deffe_D=max(trcmin,bioin(ibiodfe))/(kfe_D
+     &       +max(trcmin,bioin(ibiodfe)))
+      thetamax_D=thetamaxlo+(thetamaxhi-thetamaxlo)*deffe_D
+      alpha_D=alphamin+(alphamax-alphamin)*deffe_D
+      gl_D=gl*thetamax_D*alpha_D
+#  endif
+#  if defined O_cal_kk
+      deffe_C=max(trcmin,bioin(ibiodfe))
+     &/(kfe_C+max(trcmin,bioin(ibiodfe)))
+      thetamax_C=thetamaxlo+(thetamaxhi-thetamaxlo)*deffe_C
+      alpha_C=alphamin+(alphamax-alphamin)*deffe_C
+      gl_C=gl*thetamax_C*alpha_C
+#  endif
+#  if defined O_kk_diat
+      deffe_Diat=max(trcmin,bioin(ibiodfe))
+     &/(kfe_Diat+max(trcmin,bioin(ibiodfe)))
+      thetamax_Diat=thetamaxlo+(thetamaxhi-thetamaxlo)*deffe_Diat
+      alpha_Diat=alphamin+(alphamax-alphamin)*deffe_Diat
+      gl_Diat=gl*thetamax_Diat*alpha_Diat
+#  endif
+# endif
+
+!     photosynthesis after Evans & Parslow (1985)
+!     notation as in JGOFS report No. 23 p. 6
+      f1 = exp(((-kw
+# if defined O_npzd_CDOM_attenuation
+     &     *1.2
+# endif
+     &     ) - kc*(max(trcmin,bioin(ibiop))
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &     +max(trcmin,bioin(ibiodiaz))
+# endif
+# if defined O_cal_kk
+     &     +max(trcmin,bioin(ibioc))
+# endif
+# if defined O_kk_diat
+     &     +max(trcmin,bioin(ibiodiat))
+# endif
+     &     )
+# if defined O_kk_caco3tr
+     &     - kc_c*max(trcmin,bioin(ibiocaco3))
+# endif
+     &     )*dzt)
+
+# if defined O_npzd_iron || defined O_npzd_fe_limitation
+#  if defined O_npzd_iron
+      jmax = abio*bct*deffe
+#  else
+! In the following "felimit" is determined by an iron mask and
+! is used to limit phytoplankton growth in HNLC regions
+      jmax = abio*bct*felimit
+#  endif
+# else 
+      jmax = abio*bct
+# endif
+      gd = jmax*dayfrac
+# if defined O_npzd_iron
+      u1 = max(gl_O/gd,1.e-6)
+# else
+      u1 = max(gl*alpha/gd,1.e-6)
+# endif
+      u2 = u1*f1
+!     for the following approximation ensure that u1 < 20
+      phi1 = log(u1+sqrt(1.+u1**2.))-(sqrt(1.+u1**2.)-1.)/u1
+      phi2 = log(u2+sqrt(1.+u2**2.))-(sqrt(1.+u2**2.)-1.)/u2
+
+      avej = gd*(phi1 - phi2)/(((
+# if defined O_npzd_cdom_attenuation
+     &     1.2*
+# endif
+     &     kw) + kc*(max(trcmin,bioin(ibiop))
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + max(trcmin,bioin(ibiodiaz))
+# endif
+# if defined O_cal_kk
+     &       + max(trcmin,bioin(ibioc))
+# endif
+# if defined O_kk_diat
+     &       + max(trcmin,bioin(ibiodiat))
+# endif
+     &     )
+# if defined O_kk_caco3tr
+     &     + kc_c*max(trcmin,bioin(ibiocaco3))
+# endif
+     &     )*dzt)
+! Make the max grazing rate a function of temperature
+      gmax = gbio*bctz
+! Note that bctz is set in tracers.F
+
+# if defined O_cal_kk
+#  if defined O_npzd_iron || defined O_npzd_fe_limitation
+#   if defined O_npzd_iron
+      jmax_C = abioc*bct*deffe_C
+#   else
+      jmax_C = abioc*bct*felimit_C
+#   endif
+#  else
+      jmax_C = abioc*bct
+#  endif
+      gd_C = jmax_C*dayfrac
+#  if defined O_npzd_iron
+      u1 = max(gl_C/gd_C,1.e-6)
+#  else
+      u1 = max(gl*alpha_C/gd_C,1.e-6)
+#  endif
+      u2 = u1*f1
+!     for the following approximation ensure that u1 < 20
+      phi1 = log(u1+sqrt(1.+u1**2.))-(sqrt(1.+u1**2.)-1.)/u1
+      phi2 = log(u2+sqrt(1.+u2**2.))-(sqrt(1.+u2**2.)-1.)/u2
+
+      avej_C = gd_C*(phi1 - phi2)/((
+# if defined O_npzd_cdom_attenuation
+     &     1.2*
+# endif
+     &     kw + kc*(max(trcmin,bioin(ibiop))
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + max(trcmin,bioin(ibiodiaz))
+#  endif
+# if defined O_cal_kk
+     &       + max(trcmin,bioin(ibioc))
+# endif
+# if defined O_kk_diat
+     &       + max(trcmin,bioin(ibiodiat))
+# endif
+     &     )
+#  if defined O_kk_caco3tr
+     &     + kc_c*max(trcmin,bioin(ibiocaco3))
+#  endif
+     &       )*dzt)
+# endif
+
+# if defined O_kk_diat
+#  if defined O_npzd_iron || defined O_npzd_fe_limitation
+#   if defined O_npzd_iron
+
+      jmax_Diat = abiodiat*bct*deffe_Diat
+#   else
+      jmax_Diat = abiodiat*bct*felimit_Diat
+#   endif
+#  else
+      jmax_Diat = abiodiat*bct
+#  endif
+      gd_Diat = jmax_Diat*dayfrac
+#  if defined O_npzd_iron
+      u1 = max(gl_Diat/gd_Diat,1.e-6)
+#  else
+      u1 = max(gl*alpha_Diat/gd_Diat,1.e-6)
+#  endif
+      u2 = u1*f1
+!     for the following approximation ensure that u1 < 20
+      phi1 = log(u1+sqrt(1.+u1**2.))-(sqrt(1.+u1**2.)-1.)/u1
+      phi2 = log(u2+sqrt(1.+u2**2.))-(sqrt(1.+u2**2.)-1.)/u2
+
+      avej_Diat = gd_Diat*(phi1 - phi2)/((
+# if defined O_npzd_cdom_attenuation
+     &     1.2*
+# endif
+     &     kw + kc*(max(trcmin,bioin(ibiop))
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + max(trcmin,bioin(ibiodiaz))
+#  endif
+# if defined O_cal_kk
+     &       + max(trcmin,bioin(ibioc))
+# endif
+# if defined O_kk_diat
+     &       + max(trcmin,bioin(ibiodiat))
+# endif
+     &     )
+#  if defined O_kk_caco3tr
+     &     + kc_c*max(trcmin,bioin(ibiocaco3))
+#  endif
+     &       )*dzt)
+# endif
+
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+#  if defined O_npzd_iron || defined O_npzd_fe_limitation
+#   if defined O_npzd_iron
+      jmax_D = max(0.,abio*(bct)*deffe_D)*jdiar
+#   else
+      jmax_D = max(0.,abio*(bct)*felimit_D)*jdiar
+#   endif
+#  else
+      jmax_D = max(0.,abio*(bct))*jdiar
+#  endif
+      gd_D = max(1.e-14,jmax_D*dayfrac)
+#  if defined O_npzd_iron
+      u1 = max(gl_D/gd_D,1.e-6)
+#  else
+      u1 = max(gl*alpha/gd_D,1.e-6)
+#  endif      
+      u2 = u1*f1
+!     for the following approximation ensure that u1 < 20
+      phi1 = log(u1+sqrt(1.+u1**2.))-(sqrt(1.+u1**2.)-1.)/u1
+      phi2 = log(u2+sqrt(1.+u2**2.))-(sqrt(1.+u2**2.)-1.)/u2
+      avej_D = gd_D*(phi1 - phi2)/(((
+#  if defined O_npzd_cdom_attenuation
+     &     1.2*
+#  endif
+     &     kw) + kc*(max(trcmin,bioin(ibiop))
+     &       + max(trcmin,bioin(ibiodiaz))
+#  if defined O_cal_kk
+     &       + max(trcmin,bioin(ibioc))
+#  endif
+#  if defined O_kk_diat
+     &       + max(trcmin,bioin(ibiodiat))
+#  endif
+     &     )
+#  if defined O_kk_caco3tr
+     &     + kc_c*max(trcmin,bioin(ibiocaco3))
+#  endif
+     &     )*dzt)
+# endif
+!     check grazing preferences = 1 for N case
+        IF ((zprefP + zprefDet + zprefZ + zprefDiaz
+     &         + zprefDiat + zprefMP + zprefC).ne.1) THEN
+          zprefP = (1.-(zprefMP+zprefDiaz))*0.2
+          zprefDiat =  (1.-(zprefMP+zprefDiaz))*0.2
+          zprefDet = (1.-(zprefMP+zprefDiaz))*0.2
+          zprefC = (1.-(zprefMP+zprefDiaz))*0.2
+          zprefZ = 1.-(zprefMP+zprefDiaz+zprefC+zprefDet
+     &                 +zprefP+zprefDiat)
+          IF ((zprefP + zprefDet + zprefZ + zprefDiaz
+     &         + zprefDiat + zprefMP + zprefC).ne.1) THEN
+!            print*, ' '
+!            print*, '==> Error: grazing preference values must be'
+!            print*, '           set in control.in'
+!            print*, 'zprefP=',zprefP
+!            print*, 'zprefZ=',zprefZ
+!            print*, 'zprefC=',zprefC
+!            print*, 'zprefDiat=',zprefDiat
+!            print*, 'zprefDiaz=',zprefDiaz
+!            print*, 'zprefDet=',zprefDet
+!            print*, 'zprefMP=',zprefMP
+!            stop '=>npzd_src' 
+          END IF
+        END IF
+
+      nupt = nupt0*bct
+
+      bioout(:) = 0.0
+      bion = bioin(ibion)
+      biop = bioin(ibiop)
+      bioz = bioin(ibioz)
+      biod = bioin(ibiod)
+# if defined O_cal_kk
+      bioc = bioin(ibioc)
+# endif
+# if defined O_kk_diat
+      biodiat = bioin(ibiodiat)
+# endif
+# if defined O_npzd_nitrogen
+      biono3 = bioin(ibiono3)
+#  if !defined O_npzd_simple
+      biodiaz = bioin(ibiodiaz)
+#  endif
+# endif
+# if defined O_npzd_iron
+      biodfe = bioin(ibiodfe)
+      biodetrfe = bioin(ibiodetrfe)
+# endif
+# if defined O_cal_kk
+      nuct = nuct0*bct
+      npp_Cout = 0.0
+      graz_Cout = 0.0
+      morp_Cout = 0.0
+      morpt_Cout = 0.0
+# endif
+# if defined O_kk_diat
+      nudt = nudt0*bct
+      npp_Diatout = 0.0
+      graz_Diatout = 0.0
+      morp_Diatout = 0.0
+      morpt_Diatout = 0.0
+# endif
+# if defined O_isotopes
+      biocaco3c13 = bioin(ibiocaco3c13)
+      rcaco3c13expoout = 0.0
+      biodic13 = bioin(ibiodic13)
+      rc13expoout = 0.0
+      biophytc13 = bioin(ibiophytc13)
+      biodiazc13 = bioin(ibiodiazc13)
+      biozoopc13 = bioin(ibiozoopc13)
+      biococcc13 = bioin(ibiococcc13)
+      biodiatc13 = bioin(ibiodiatc13)
+      biodetrc13 = bioin(ibiodetrc13)
+
+      rn15expoout = 0.0
+      biodin15 = bioin(ibiodin15)
+      biophytn15 = bioin(ibiophytn15)
+      biodiazn15 = bioin(ibiodiazn15)
+      biozoopn15 = bioin(ibiozoopn15)
+      biococcn15 = bioin(ibiococcn15)
+      biodiatn15 = bioin(ibiodiatn15)
+      biodetrn15 = bioin(ibiodetrn15)
+
+!      biosil30 = bioin(ibiosil30)
+      biodiats30 = bioin(ibiodiats30)
+
+! KK following in a different place than MOBI
+      rtphytc13 = max(trcmin,biophytc13)/(max(trcmin,biop)*redctn)
+      rtphytc13 = min(rtphytc13, 2.*rc13std/(1+rc13std))
+      rtphytc13 = max(rtphytc13, 0.5*rc13std/(1+rc13std))
+
+      rtdiazc13 = max(trcmin,biodiazc13)/(max(trcmin,biodiaz)*redctn)
+      rtdiazc13 = min(rtdiazc13, 2.*rc13std/(1+rc13std))
+      rtdiazc13 = max(rtdiazc13, 0.5*rc13std/(1+rc13std))
+
+      rtzoopc13 = max(trcmin,biozoopc13)/(max(trcmin,bioz)*redctn)
+      rtzoopc13 = min(rtzoopc13, 2.*rc13std/(1+rc13std))
+      rtzoopc13 = max(rtzoopc13, 0.5*rc13std/(1+rc13std))
+
+      rtcoccc13 = max(trcmin,biococcc13)/(max(trcmin,bioc)*redctn)
+      rtcoccc13 = min(rtcoccc13, 2.*rc13std/(1+rc13std))
+      rtcoccc13 = max(rtcoccc13, 0.5*rc13std/(1+rc13std))
+
+      rtdiatc13 = max(trcmin,biodiatc13)/(max(trcmin,biodiat)*redctn)
+      rtdiatc13 = min(rtdiatc13, 2.*rc13std/(1+rc13std))
+      rtdiatc13 = max(rtdiatc13, 0.5*rc13std/(1+rc13std))
+
+      rtdetrc13 = max(trcmin,biodetrc13)/(max(trcmin,biod)*redctn)
+      rtdetrc13 = min(rtdetrc13, 2.*rc13std/(1+rc13std))
+      rtdetrc13 = max(rtdetrc13, 0.5*rc13std/(1+rc13std))
+
+      rtdin15 = max(trcmin,biodin15)/max(trcmin,biono3)
+      rtdin15 = min(rtdin15, 2*rn15std/(1+rn15std))
+      rtdin15 = max(rtdin15, rn15std/(1+rn15std)/2.)
+
+      rtphytn15 = max(trcmin,biophytn15)/max(trcmin,biop)
+      rtphytn15 = min(rtphytn15, 2.*rn15std/(1+rn15std))
+      rtphytn15 = max(rtphytn15, rn15std/(1+rn15std)/2.)
+
+      rtcoccn15 = max(trcmin,biococcn15)/max(trcmin,bioc)
+      rtcoccn15 = min(rtcoccn15, 2.*rn15std/(1+rn15std))
+      rtcoccn15 = max(rtcoccn15, rn15std/(1+rn15std)/2.)     
+        
+      rtzoopn15 = max(trcmin,biozoopn15)/max(trcmin,bioz)
+      rtzoopn15 = min(rtzoopn15, 2.*rn15std/(1+rn15std))
+      rtzoopn15 = max(rtzoopn15, rn15std/(1+rn15std)/2.)
+
+      rtdetrn15 = max(trcmin,biodetrn15)/max(trcmin,biod)
+      rtdetrn15 = min(rtdetrn15, 2.*rn15std/(1+rn15std))
+      rtdetrn15 = max(rtdetrn15, rn15std/(1+rn15std)/2.)
+
+      rtdiazn15 = max(trcmin,biodiazn15)/max(trcmin,biodiaz)
+      rtdiazn15 = min(rtdiazn15, 2.*rn15std/(1+rn15std))
+      rtdiazn15 = max(rtdiazn15, rn15std/(1+rn15std)/2.)
+
+      rtdiatn15 = max(trcmin,biodiatn15)/max(trcmin,biodiat)
+      rtdiatn15 = min(rtdiatn15, 2.*rn15std/(1+rn15std))
+      rtdiatn15 = max(rtdiatn15, rn15std/(1+rn15std)/2.)
+
+      rtdiats30 = max(trcmin,biodiats30)
+     &          /(max(trcmin,biodiat)*redctn*sipr)
+      rtdiats30 = min(rtdiats30, 2.*rs30std/(1+rs30std))
+      rtdiats30 = max(rtdiats30, 0.5*rs30std/(1+rs30std))
+# endif
+# if defined O_kk_caco3tr
+      biocaco3 = bioin(ibiocaco3)
+      calproout = 0.0
+      calattout = 0.0
+      disslout = 0.0
+      expocaco3out = 0.0
+# endif
+# if defined O_kk_ballast
+      biod_B = bioin(ibiod_B)
+      expoout_B = 0.0
+      graz_Det_out_B = 0.0
+      remiout_B = 0.0
+# endif
+# if defined O_plastic
+      biomp = bioin(ibiomp)
+      biomp_a = bioin(ibiompa)
+      biomp_p = bioin(ibiompp)
+      expompout_a = 0.0
+      expompout_p = 0.0
+      agg_uptout = 0.0
+      zoop_uptout = 0.0
+      agg_relout = 0.0
+      zoop_relout = 0.0
+      mar_snow = 0.0
+# endif
+# if defined O_zoop_det
+      biodz = bioin(ibiodz)
+      remizout = 0.0
+      expozout = 0.0
+# endif
+      expoout = 0.0
+      grazout = 0.0
+      morpout = 0.0
+      morzout = 0.0
+      graz_Det_out = 0.0
+      graz_Zout = 0.0
+# if defined O_save_npzd
+      nppout = 0.0
+      morptout = 0.0
+      remiout = 0.0
+      excrout = 0.0
+#  if defined O_npzd_nitrogen 
+#   if !defined O_npzd_simple
+      npp_Dout = 0.0
+      graz_Dout = 0.0
+      morp_Dout = 0.0
+#   endif
+      nfixout = 0.0
+#  endif
+#  if defined O_npzd_iron
+      expofeout = 0.0
+      remifeout = 0.0
+#   if defined O_npzd_iron_diagnostics
+      feorgadsout = 0.0
+      deffeout = 0.0
+      feprimeout = 0.0
+      fecolout = 0.0
+#    if defined O_cal_kk
+      deffeout_C = 0.0
+#    endif 
+#    if defined O_kk_caco3tr
+      feorgadsout_ca = 0.0
+#    endif
+#    if defined O_kk_diat
+      deffeout_Diat = 0.0
+#    endif   
+#   endif
+#   if defined O_npzd_chl
+      chlout = 0.0
+#    if defined O_npzd_nitrogen
+      chl_D_out = 0.0
+#    endif
+#   endif
+#  endif
+#  if defined O_npzd_extra_diagnostics
+      avej_out = 0.0
+      avej_D_out = 0.0
+      gmax_out = 0.0
+      no3P_out = 0.0
+      po4P_out = 0.0
+      po4_D_out = 0.0
+#  endif
+# endif
+
+      do n=1,ntsb
+
+# if defined O_npzd_iron
+        p1 = min(max(biop,trcmin),pmax)
+        p2 = max(0.0,max(biop,trcmin) - pmax)
+#  if defined O_cal_kk || defined O_kk_diat
+        kfevar = kfe
+#  else
+        kfevar=(kfemin*p1+kfemax*p2)/(p1+p2) 
+#  endif
+        deffe = max(trcmin,biodfe)/(kfevar + max(trcmin,biodfe))
+        jmax = abio*bct*deffe
+#  if defined O_cal_kk
+        deffe_C = max(trcmin,biodfe)/(kfe_C + max(trcmin,biodfe))
+        jmax_C = abioc*bct*deffe_C 
+#  endif
+#  if defined O_kk_diat
+        deffe_Diat = max(trcmin,biodfe)
+     &  /(kfe_Diat + max(trcmin,biodfe))
+        jmax_Diat = abiodiat*bct*deffe_Diat 
+#  endif
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+        deffe_D = max(trcmin,biodfe)/(kfe_D + max(trcmin,biodfe))
+        jmax_D = max(0.,abio*(bct - 2.6)*deffe_D)*jdiar
+#  endif
+# endif
+
+!       growth rate of phytoplankton
+        u_P = min(avej, jmax*max(trcmin,bion)/(k1p + max(trcmin,bion)))
+        po4P = jmax*bion/(k1p + bion) 
+#  if defined O_cal_kk
+        u_C = min(avej_C, jmax_C*max(trcmin,bion)/(k1p_C 
+     &        + max(trcmin,bion)))
+#  endif
+#  if defined O_kk_diat
+!   Si limitation here is a mask unless Si tracer also used
+        u_Diat = min(avej_Diat, jmax_Diat*max(trcmin,biosi)
+     &         /(k1si + max(trcmin,biosi)))
+        u_Diat = min(u_Diat, jmax_Diat*max(trcmin,bion)
+     &         /(k1p_Diat + max(trcmin,bion)))
+#  endif
+# if defined O_npzd_nitrogen
+!       nitrate limitation
+        u_P = min(u_P, jmax*max(trcmin,biono3)/(k1n 
+     &        + max(trcmin,biono3)))
+#  if defined O_cal_kk
+        u_C = min(u_C, jmax_C*max(trcmin,biono3)/(k1n_C 
+     &        + max(trcmin,biono3)))
+#  endif
+#  if defined O_kk_diat
+        u_Diat = min(u_Diat, jmax_Diat*max(trcmin,biono3)
+     &         /(k1n_Diat + max(trcmin,biono3)))
+#  endif
+        no3P = jmax*max(trcmin,biono3)/(k1n + max(trcmin,biono3))
+!       growth rate of diazotrophs smaller than other phytoplankton and
+!       not nitrate limited
+#  if !defined O_npzd_simple
+        u_D = min(avej_D, jmax_D*max(trcmin,bion)/(k1p
+     &        + max(trcmin,bion)))
+        po4_D = jmax_D*max(trcmin,bion)/(k1p + max(trcmin,bion))
+#  endif
+# endif
+!       Set the grazing coefficients
+        thetaZ = zprefP*max(trcmin,biop)+zprefDet*max(trcmin,biod
+# if defined O_zoop_det
+     &           +biodz
+# endif
+     &           )
+     &           +zprefZ*max(trcmin,bioz) + kzoo
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &           +zprefDiaz*max(trcmin,biodiaz)
+# endif
+#  if defined O_cal_kk
+     &         + zprefC*max(trcmin,bioc)
+#  endif
+#  if defined O_kk_diat
+     &         + zprefDiat*max(trcmin,biodiat)
+#  endif
+#  if defined O_kk_ballast
+     &         + zprefDet*max(trcmin,biod_B)
+#  endif
+#  if defined O_plastic
+     &         + zprefMP*max(trcmin,biomp+biomp_a)*poo_con !KK test
+#  endif
+        ing_P = zprefP/thetaZ
+        ing_Det = zprefDet/thetaZ
+        ing_Z = zprefZ/thetaZ
+#  if !defined O_npzd_simple
+        ing_D = zprefDiaz/thetaZ
+#  endif
+#  if defined O_cal_kk
+        ing_C = zprefC/thetaZ
+#  endif
+#  if defined O_kk_diat
+        ing_Diat = zprefDiat/thetaZ
+#  endif
+#  if defined O_plastic
+! in N units
+        ing_MP = zprefMP/thetaZ
+#  endif
+        npp = u_P*biop
+# if defined O_cal_kk
+        npp_C = u_C*bioc
+# endif
+# if defined O_kk_diat
+        npp_Diat = u_Diat*biodiat
+# endif
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+        npp_D = u_D*biodiaz
+!       grazing on diazotrophs
+        g_D = gmax*ing_D*biodiaz
+        graz_D = g_D*bioz
+        morp_D = nupt*biodiaz ! linear mortality
+        no3upt_D = max(trcmin,biono3)/(k1n + max(trcmin,biono3))*npp_D ! nitrate uptake 
+# else
+        no3upt_D = max(trcmin,biono3)/(k1n + max(trcmin,biono3))*npp ! nitrate uptake 
+# endif
+!       grazing on P
+        g_P = gmax*ing_P*biop
+        graz = g_P*bioz
+!       grazing on Z
+        g_Z = gmax*ing_Z*bioz
+        graz_Z = g_Z*bioz
+!       grazing on Detritus
+        g_Det = gmax*ing_Det*(biod
+# if defined O_zoop_det
+     &        +biodz
+# endif
+     &        )
+        graz_Det = g_Det*bioz
+# if defined O_cal_kk
+        g_C =  gmax*ing_C*bioc
+        graz_C = g_C*bioz 
+        morp_C = nuc*bioc
+        morpt_C = nuct*bioc
+# endif
+# if defined O_kk_diat
+        g_Diat =  gmax*ing_Diat*biodiat
+        graz_Diat = g_Diat*bioz 
+        morp_Diat = nu_diat*biodiat
+        morpt_Diat = nudt*biodiat
+# endif
+# if defined O_kk_caco3tr
+        expocaco3 = wwc*biocaco3 !mmol/m3/s
+        dissl = biocaco3*dissk1 !mmol/m3
+# endif
+# if defined O_kk_ballast
+        g_Det_B = gmax*ing_Det*biod_B  
+        graz_Det_B = g_Det_B*bioz
+        remi_B = bapr*dissl/(capr*redctn*1.e3) !mmol N/m3
+        if(remi_B.lt.0) remi_B = 0.
+        if(remi_B.ge.biod_B) remi_B = biod_B
+        expo_B = wwc*biod_B !ballasted by CaCO3     
+# endif
+        morp = nup*biop
+        morpt = nupt*biop
+        morz = nuz*bioz*bioz
+        remi = nud*bct*biod
+        expo = wwd*biod
+# if defined O_plastic
+        g_MP = 0.!gmax*ing_MP*biomp*poo_con !KK relict- not used
+        graz_MP = (gmax*ing_MP*bioz)/poo_con*biomp_a
+        zoop_upt = (gmax*ing_MP*bioz)/poo_con*biomp 
+        zoop_rel = nud*bct*biomp_p
+        expomp_p = wwdz*biomp_p
+        expomp_a = wwd*biomp_a 
+        agg_rel = nud*bct*biomp_a
+
+# endif !end of O_plastic
+# if defined O_zoop_det
+        remiz = nud*bct*biodz
+        expoz = wwdz*biodz
+# endif
+# if defined O_npzd_iron
+!  remineralization of iron from organic matter
+        remife=nud*bct*biodetrfe
+
+!   Scavenging of dissolved iron is based on Honeymoon et al. (1988) 
+!   and Parekh et al. (2004). 
+
+        if (o2*1e3 .gt. o2t) then
+
+          fepa = 1.0 + kfeleq * (lig - biodfe)
+     
+          feprime = (-fepa +(fepa
+     &         * fepa + 4.0 * kfeleq 
+     &         * biodfe)**(0.5)) /(2.0 * kfeleq)
+
+          feorgads = kfeorg*(((max(trcmin,biod)
+     &               )*mc*redctn)**0.58)*feprime 
+#  if defined O_kk_caco3tr
+          feorgads_ca = kfeorg_ca*(((max(trcmin,biocaco3*1.e-3)
+     &               )*60.01)**0.58)*feprime !molar mass caco3 
+#  endif
+          fecol = kfecol*feprime
+        else
+!   These are default values. In case of O2 < O2T, no scavenging is taking place
+          feorgads = 0.0
+#  if defined O_kk_caco3tr
+          feorgads_ca = 0.0
+#  endif
+          fecol = 0.0
+          feprime = 0.0
+          fepa = 0.0
+        endif
+
+        expofe = wwd * biodetrfe
+
+#  if defined O_npzd_chl
+!   Calculation of average light in mixed layer for calculation of Chl diagnostic
+        irrtop=gl/2/par
+! KK irrtop is wrong if using multiple phytoplankton types
+        kirr=-kw - kc*(bioin(ibiop)
+#   if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + bioin(ibiodiaz)
+#   endif
+#  if defined O_cal_kk
+     &       + bioin(ibioc)
+#  endif
+#  if defined O_kk_diat
+     &       + bioin(ibiodiat)
+#  endif
+
+     &     )
+#  if defined O_kk_caco3tr
+     &     - kc_c*bioin(ibiocaco3)
+#  endif
+
+        aveirr=-1/dzt/kirr*(irrtop-irrtop*exp(kirr*dzt))
+!   Diagnostic calculation of Chl:C ratio to calculate Chl concentration
+        thetachl=thetamax/(1+thetamax*aveirr/2/u_P)      !Chl:C after Geider et al. (1997), note that gl includes alpha and PAR already
+#   if defined O_npzd_nitrogen
+        thetachl_D=thetamax_D/(1+thetamax_D*aveirr/2/u_D)
+#   endif
+#   if defined O_cal_kk
+        thetachl_C=thetamax_C/(1+thetamax_C*aveirr/2/u_C)
+#   endif
+#   if defined O_kk_diat
+        thetachl_Diat=thetamax_Diat/(1+thetamax_Diat*aveirr/2/u_Diat)
+#   endif
+#  endif
+# endif
+
+!       flags prevent negative values by setting outgoing fluxes to
+!       zero if tracers are lower than trcmin
+        nflag = 0.5 + sign(0.5,bion - trcmin)
+        pflag = 0.5 + sign(0.5,biop - trcmin)
+        zflag = 0.5 + sign(0.5,bioz - trcmin)
+        dflag = 0.5 + sign(0.5,biod - trcmin)
+# if defined O_plastic
+        mpflag = 0.5 + sign(0.5,biomp - trcmin)
+        mppflag = 0.5 + sign(0.5,biomp_p - trcmin)
+        mpaflag = 0.5 + sign(0.5,biomp_a - trcmin)
+# endif
+# if defined O_zoop_det
+        dzflag = 0.5 + sign(0.5,biodz - trcmin)
+# endif
+# if defined O_npzd_iron
+        dfeflag = 0.5 + sign(0.5,biodfe - trcmin)
+        detrfeflag = 0.5 + sign(0.5,biodetrfe - trcmin)
+# endif
+# if defined O_npzd_nitrogen
+        no3flag = 0.5 + sign(0.5,biono3 - trcmin)
+#  if !defined O_npzd_simple
+        diazflag = 0.5 + sign(0.5,biodiaz - trcmin)
+#  endif
+# endif
+# if defined O_kk_ballast
+        dflag_B = 0.5 + sign(0.5,biod_B - trcmin)
+# endif
+# if defined O_cal_kk
+        cflag = 0.5 + sign(0.5,bioc - trcmin)        
+# endif
+# if defined O_kk_diat
+        diatflag = 0.5 + sign(0.5,biodiat - trcmin)        
+# endif
+# if defined O_kk_caco3tr
+        caco3flag = 0.5 + sign(0.5,biocaco3 - trcmin)
+# endif
+        graz = graz*pflag*zflag
+        graz_Z = graz_Z*zflag
+        graz_Det = graz_Det*dflag*zflag
+        morp = morp*pflag
+        morpt = morpt*pflag
+        morz = morz*zflag
+        remi = remi*dflag
+        expo = expo*dflag
+# if defined O_plastic         
+        expomp_a = expomp_a*mpaflag
+        expomp_p = expomp_p*mppflag
+        graz_MP = graz_MP*zflag*mpaflag
+        zoop_upt = zoop_upt*zflag*mpflag
+        zoop_rel = zoop_rel*mppflag
+        agg_rel = agg_rel*mpaflag
+# endif
+# if defined O_zoop_det
+        remiz = remiz*dzflag
+        expoz = expoz*dzflag
+# endif
+# if defined O_npzd_nitrogen
+        npp = npp*nflag*no3flag*pflag
+#  if defined O_npzd_iron
+     &      *dfeflag
+#  endif
+#  if !defined O_npzd_simple
+        npp_D = npp_D*nflag*diazflag
+        graz_D = graz_D*diazflag*zflag
+        morp_D = morp_D*diazflag
+        no3upt_D = no3upt_D*no3flag*diazflag
+#  else
+        no3upt_D = no3upt_D*no3flag*pflag
+#  endif
+# else
+        npp = npp*nflag*pflag
+#  if defined O_npzd_iron
+     &      *dfeflag
+#  endif
+# endif
+# if defined O_npzd_iron
+        remife=remife*detrfeflag
+        feorgads=feorgads*dfeflag
+#  if defined O_kk_caco3tr
+        feorgads_ca=feorgads_ca*dfeflag
+#  endif
+        expofe=expofe*detrfeflag
+        fecol=fecol*dfeflag
+# endif
+# if defined O_kk_ballast
+        graz_Det_B = graz_Det_B*dflag_B*zflag
+# endif
+# if defined O_kk_caco3tr
+        dissl = dissl*caco3flag
+        expocaco3 = expocaco3*caco3flag
+        calatt = calatt*caco3flag
+# endif
+# if defined O_cal_kk
+        npp_C = npp_C*nflag*cflag 
+#  if defined O_npzd_nitrogen
+     &      *no3flag
+#  endif
+#  if defined O_npzd_iron
+     &      *dfeflag
+#  endif
+        graz_C = graz_C*cflag*zflag
+        morp_C = morp_C*cflag
+        morpt_C = morpt_C*cflag
+# endif
+# if defined O_kk_diat
+        npp_Diat = npp_Diat*nflag*diatflag 
+#  if defined O_npzd_nitrogen
+     &      *no3flag
+#  endif
+#  if defined O_npzd_iron
+     &      *dfeflag
+#  endif
+        graz_Diat = graz_Diat*diatflag*zflag
+        morp_Diat = morp_Diat*diatflag
+        morpt_Diat = morpt_Diat*diatflag
+# endif
+# if defined O_npzd_extra_diagnostics
+        avej = avej*pflag
+#  if !defined O_npzd_simple
+        avej_D = avej_D*diazflag
+#  endif
+        gmax = gmax*zflag
+        no3P = no3P*no3flag
+        po4P = po4P*nflag
+        po4_D = po4_D*nflag
+# endif
+# if defined O_plastic
+!plastic taken up in phytoplankton aggregates
+! assume 3% aggregation rate
+!!marine snow quantity in bio units- total S/S of MS
+       mar_snow = ((1.-gamma1)*
+     &       (1.-rpoo)*
+     &       (graz + graz_Det 
+     &       + (graz_Z
+#  if defined O_kk_ballast
+     &       - bapr*graz_Z
+#  endif
+     &       )
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + graz_D
+#  endif
+#  if defined O_kk_diat
+     &       + graz_Diat
+#  endif
+#  if defined O_cal_kk
+     &       + (graz_C
+#   if defined O_kk_ballast
+     &       - bapr*graz_C
+#   endif
+     &       )
+#  endif
+     &       )
+#  if defined O_npzd_nitrogen
+     &       + morp_D
+#  endif
+     &       + morp
+#  if defined O_kk_diat
+     &       + morp_Diat
+#  endif
+#  if defined O_cal_kk
+     &       + (morp_C
+#   if defined O_kk_ballast
+     &       - bapr*morp_C
+#   endif
+     &       )
+#  endif
+     &      + (morz
+#  if defined O_kk_ballast
+     &       - bapr*morz
+#  endif 
+     &       ))
+#  if defined O_kk_ballast
+!     &       + remi_B!*agg_con
+#  endif
+! max potential uptake limited by availability
+        agg_upt = min(mar_snow*agg_con*biomp/(kp+biomp),biomp)*mpflag 
+!         agg_upt = (mar_snow*biomp/(kp+biomp))*mpflag
+# endif
+!   Excretion is the difference between
+!   the zooplankton assimilation and growth efficiencies
+
+        excr = (gamma1-geZ)*(graz+graz_Z+graz_Det
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + graz_D
+# endif
+# if defined O_cal_kk
+     &       + graz_C
+# endif
+# if defined O_kk_diat
+     &       + graz_Diat
+# endif
+# if defined O_kk_ballast
+     &       + graz_Det_B
+# endif
+     &       )
+
+!       nutrients equation
+        bion = bion + tsb*redptn*(remi + excr - npp + morpt
+# if defined O_zoop_det
+     &         + remiz
+# endif
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &         - npp_D
+# endif
+# if defined O_cal_kk
+     &         - npp_C + morpt_C
+# endif
+# if defined O_kk_diat
+     &         - npp_Diat + morpt_Diat
+# endif
+     &         )
+!       phytoplankton equation
+        biop = biop + tsb*(npp - morp - graz - morpt)
+#  if defined O_cal_kk
+!       coccolithophores equation
+        bioc = bioc + tsb*(npp_C - morp_C - graz_C
+     &       - morpt_C)
+#  endif
+#  if defined O_kk_diat
+!       diatoms equation
+        biodiat = biodiat + tsb*(npp_Diat - morp_Diat - graz_Diat
+     &       - morpt_Diat)
+#  endif
+!       zooplankton equation
+        bioz = bioz + tsb*(geZ*(graz + graz_Det + graz_Z
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + graz_D
+# endif
+# if defined O_cal_kk
+     &       + graz_C
+# endif
+# if defined O_kk_diat
+     &       + graz_Diat
+# endif
+# if defined O_kk_ballast
+     &       + graz_Det_B
+# endif
+     &       )
+     &       - morz - graz_Z)
+
+!       detritus equations
+        biod = biod + tsb*((1.-gamma1)*
+# if defined O_zoop_det
+     &       (1.-rpoo)*
+# endif
+     &       (graz + graz_Det 
+     &       + (graz_Z
+#  if defined O_kk_ballast
+     &       - bapr*graz_Z
+#  endif
+     &       )
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + graz_D
+# endif
+# if defined O_kk_diat
+     &       + graz_Diat
+# endif
+# if defined O_cal_kk
+     &       + (graz_C
+#  if defined O_kk_ballast
+     &       - bapr*graz_C
+#  endif
+     &       )
+# endif
+     &       )
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + morp_D
+# endif
+# if defined O_kk_diat
+     &       + morp_Diat
+# endif
+# if defined O_cal_kk
+     &       + (morp_C
+#  if defined O_kk_ballast
+     &       - bapr*morp_C
+#  endif
+     &       )
+# endif
+     &      + (morz
+# if defined O_kk_ballast
+     &       - bapr*morz
+# endif 
+     &       )
+     &       + morp - remi - graz_Det - expo + impo)
+# if defined O_kk_ballast
+     &       + remi_B
+# endif
+
+# if defined O_zoop_det
+       biodz = biodz + tsb*((1.-gamma1)*
+     &       rpoo*
+     &       (graz + graz_Det 
+     &       + (graz_Z
+#  if defined O_kk_ballast
+     &       - bapr*graz_Z
+#  endif
+     &       )
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &       + graz_D
+# endif
+# if defined O_kk_diat
+     &       + graz_Diat
+# endif
+# if defined O_cal_kk
+     &       + (graz_C
+#  if defined O_kk_ballast
+     &       - bapr*graz_C
+#  endif
+     &       )
+# endif
+     &       )
+     &       - remiz - expoz + impoz)
+# endif
+# if defined O_plastic
+       biomp = biomp +tsb*(zoop_rel - zoop_upt + agg_rel-agg_upt)
+
+       biomp_a = biomp_a + tsb*(impomp_a-expomp_a-agg_rel+agg_upt
+     &           - graz_MP
+     &                  )
+
+       biomp_p = biomp_p + tsb*(zoop_upt-zoop_rel+impomp_p-expomp_p
+     &           + graz_MP
+     &                  )
+
+# endif
+ 
+# if defined O_kk_ballast
+        biod_B = biod_B + tsb*((1.-gamma1)*(graz_Det_B 
+     &       + bapr*graz_Z
+# if defined O_cal_kk
+     &       + bapr*graz_C
+# endif
+     &       )
+# if defined O_cal_kk
+     &       + bapr*morp_C
+# endif
+     &       + bapr*morz 
+     &       - graz_Det_B - expo_B + impo_B)
+     &       - remi_B
+# endif
+!       calcite equations
+#  if defined O_kk_caco3tr
+#   if defined O_cal_kk && !defined O_npzd_simple
+!  net formation of attached (living) tests
+! total primary production by coccs
+        calatt = (capr*npp_C
+     &         - (morpt_C + morp_C + graz_C)*capr
+     &         + capr*geZ*(
+#    if defined O_kk_ballast
+     &           graz_Det_B
+#    endif
+#    if defined O_kk_diat
+     &         + graz_Diat
+#    endif
+     &         + graz + graz_Det
+#    if !defined O_npzd_simple
+     &         + graz_D
+#    endif
+     &         + graz_Z + graz_C) - (graz_Z + morz)*capr
+     &          )*redctn*1.e3  !convert to carbon units mmol C
+
+!   formation of detached (dead) tests, or PIC
+        calpro = ((1.-gamma1)*(capr*graz_C + capr*graz_Z) 
+     &       + capr*morp_C  + capr*morz)*redctn*1.e3 !stay in mmol
+#   elif defined O_npzd_simple
+!  net formation of attached (living) tests
+! total primary production by phyt
+        calatt = (capr*npp
+     &         - (morpt + morp + graz)*capr
+     &         + capr*geZ*(
+#    if defined O_kk_ballast
+     &           graz_Det_B
+#    endif
+     &         + graz + graz_Det
+     &         + graz_Z + graz) - (graz_Z + morz)*capr
+     &          )*redctn*1.e3  !convert to carbon units mmol C
+
+!   formation of detached (dead) tests, or PIC
+        calpro = ((1.-gamma1)*(capr*graz + capr*graz_Z) 
+     &       + capr*morp  + capr*morz)*redctn*1.e3 !stay in mmol
+#   endif
+       biocaco3 = biocaco3 -dissl + tsb*(calpro-expocaco3+impocaco3) 
+#  endif
+# if defined O_npzd_nitrogen
+!       nitrate (NO3) equation
+        biono3 = biono3 + tsb*(remi + excr - npp + morpt - no3upt_D
+# if defined O_zoop_det
+     &         + remiz
+# endif
+# if defined O_cal_kk
+     &         - npp_C + morpt_C
+# endif
+# if defined O_kk_diat
+     &         - npp_Diat + morpt_Diat
+# endif
+     &           )
+#  if !defined O_npzd_simple
+!       diazotroph equation
+        biodiaz = biodiaz + tsb*(npp_D - morp_D - graz_D)
+#  endif
+# endif
+
+# if defined O_npzd_iron
+!       dissolved iron equation
+        biodfe = biodfe + tsb*(rfeton*(excr - (npp 
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &         + npp_D
+#  endif
+#  if defined O_cal_kk
+     &         + npp_C
+#  endif
+#  if defined O_kk_diat
+     &         + npp_Diat
+#  endif
+     &         ) + morpt
+#  if defined O_cal_kk
+     &         + morpt_C
+#  endif
+#  if defined O_kk_diat
+     &         + morpt_Diat
+#  endif
+     &         )- feorgads
+#  if defined O_kk_caco3tr
+     &         - feorgads_ca
+#  endif  
+     &         + remife - fecol)
+!       particulate iron equation
+! KK ignoring ballasting of iron for now
+        biodetrfe = biodetrfe + tsb*(rfeton*((1.-gamma1)*(graz+graz_Det
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &            + graz_D
+# endif
+# if defined O_cal_kk
+     &            + graz_C
+# endif
+#    if defined O_kk_ballast
+     &            + graz_Det_B
+#    endif
+# if defined O_kk_diat
+     &            + graz_Diat
+# endif
+     &            + graz_Z) + morp 
+# if defined O_npzd_nitrogen && !defined O_npzd_simple
+     &            + morp_D 
+# endif
+# if defined O_cal_kk
+     &            + morp_C
+# endif
+# if defined O_kk_diat
+     &            + morp_Diat
+# endif
+     &            + morz - graz_Det
+#    if defined O_kk_ballast
+     &            - graz_Det_B
+#    endif
+     &            )+ feorgads
+#    if defined O_kk_caco3tr
+     &            + feorgads_ca
+#    endif  
+     &            + fecol - remife - expofe + impofe)
+# endif
+# if defined O_isotopes
+!       calculate isotope parameters
+!       See Somes et al., 2010, GBC for details/results
+! KK why only npp and not other npps?
+        uno3 = npp*tsb/max(trcmin,biono3)
+        uno3 = min(uno3, 0.999)
+        uno3 = max(uno3, trcmin)
+
+        rno3 = max(trcmin*rn15std/(1+rn15std),biodin15)
+     &       /max(max(trcmin,biono3)-max(trcmin*rn15std/(1+rn15std)
+     &       ,biodin15),trcmin*rn15std/(1+rn15std))
+        rno3 = min(rno3, 2*rn15std)
+        rno3 = max(rno3, rn15std/2.)
+
+        bassim = rno3 + eps_assim*(1-uno3)/uno3*log(1-uno3)*rno3/1000.
+        fcassim = bassim/(1+bassim)
+! KK placeholder values
+        eps_assim_si = -1.1 ! Egan et al 2012, Frings et al 2016
+
+        usil = npp*sipr*tsb/max(trcmin,biosi)
+        usil = min(usil, 0.9989)
+        usil = max(usil, trcmin)
+        rsil = max(trcmin*rs30std/(1+rs30std),biosi30)
+     &       /max(max(trcmin*rs30std/(1+rs30std),biosi)
+     &       -max(trcmin*rs30std/(1+rs30std),biosi30)
+     &       , trcmin*rs30std/(1+rs30std))
+        rsil = min(rsil, 2*rs30std)
+        rsil = max(rsil, rs30std/2.)
+        bassimsi = rsil 
+     &           + eps_assim_si*(1-usil)/usil*log(1-usil)*rsil/1000.
+        fcassimsi = bassimsi/(1+bassimsi)
+
+
+        rzoop = max(trcmin,biozoopn15)/(max(trcmin,bioz)
+     &        -max(trcmin,biozoopn15))
+        rzoop = min(rzoop, 2.*rn15std)
+        rzoop = max(rzoop, rn15std/2.)
+        bexcr = rzoop - eps_excr*rzoop/1000.
+        fcexcr = bexcr/(1+bexcr)
+
+        bnfix = rn15std - eps_nfix*rn15std/1000.
+        fcnfix = bnfix/(1+bnfix)
+
+        biocaco3c13 = biocaco3c13 - rtcaco3c13*dissl
+     &       + tsb*(rtdic13*calpro - rtcaco3c13*expocaco3 
+     &                + rcaco3c13impo)
+        rcaco3c13expoout = rcaco3c13expoout + rtcaco3c13*expocaco3
+
+        biodic13 = biodic13 + tsb*redctn*(rtdetrc13*remi 
+     &           + rtzoopc13*excr - fcnpp*npp + rtphytc13*morpt
+     &           - fcnpp*npp_D - fcnpp*npp_C + rtcoccc13*morpt_C
+     &           - fcnpp*npp_Diat + rtdiatc13*morpt_Diat)
+
+        biophytc13 = biophytc13 + tsb*redctn*(fcnpp*npp 
+     &       - rtphytc13*morp - rtphytc13*graz - rtphytc13*morpt)
+        biodiazc13 = biodiazc13 + tsb*redctn*(fcnpp*npp_D 
+     &       - rtdiazc13*(morp_D + graz_D))
+        biococcc13 = biococcc13 + tsb*redctn*(fcnpp*npp_C 
+     &       - rtcoccc13*(morp_C + graz_C + morpt_C))
+        biodiatc13 = biodiatc13 + tsb*redctn*(fcnpp*npp_Diat 
+     &       - rtdiatc13*(morp_Diat + graz_Diat + morpt_Diat))
+
+        biozoopc13 = biozoopc13 + tsb*redctn*(geZ*(rtzoopc13*graz 
+     &       + rtdetrc13*graz_Det + rtzoopc13*graz_Z
+     &       + rtdiazc13*graz_D + rtcoccc13*graz_C 
+     &       + rtdiatc13*graz_Diat + rtdetrc13*graz_Det_B )
+     &       - rtzoopc13*morz - rtzoopc13*graz_Z)
+
+        biodetrc13 = biodetrc13 +tsb*redctn*((1.-gamma1)*(rtphytc13*graz 
+     &       + rtdetrc13*graz_Det + (rtzoopc13*graz_Z
+     &       - bapr*rtzoopc13*graz_Z)
+     &       + rtdiazc13*graz_D + rtdiatc13*graz_Diat
+     &       + (rtcoccc13*graz_C - bapr*rtcoccc13*graz_C))
+     &       + rtdiazc13*morp_D + rtdiatc13*morp_Diat
+     &       + (rtcoccc13*morp_C - bapr*rtcoccc13*morp_C)
+     &       + (rtzoopc13*morz - bapr*rtzoopc13*morz)
+     &       + rtphytc13*morp - rtdetrc13*remi - rtdetrc13*graz_Det 
+     &       - rtdetrc13*expo + rc13impo)
+     &       + rtdetrc13*redctn*remi_B
+        rc13expoout = rc13expoout + rtdetrc13*expo ! N units!
+
+! KK revised to reflect no DON
+        biodin15 = biodin15 + tsb*(rtdetrn15*remi + fcexcr*excr 
+     &           - fcassim*npp + rtphytn15*morpt - fcassim*no3upt_D
+     &           - fcassim*npp_C + rtcoccn15*morpt_C
+     &           - fcassim*npp_Diat + rtdiatn15*morpt_Diat
+     &           )
+
+        biophytn15 = biophytn15 + tsb*(fcassim*npp - rtphytn15*(morp 
+     &       + graz + morpt))
+
+        biodiatn15 = biodiatn15 + tsb*(fcassim*npp_Diat 
+     &             - rtdiatn15*morp_Diat - rtdiatn15*graz_Diat 
+     &             - rtdiatn15*morpt_Diat)
+
+        biococcn15 = biococcn15 + tsb*(fcassim*npp_C
+     &       -rtcoccn15*morp_C - rtcoccn15*graz_C -rtcoccn15*morpt_C)
+
+        biodiazn15 = biodiazn15 + tsb*(fcnfix*npp_D
+     &       - rtdiazn15*morp_D - rtdiazn15*graz_D)
+
+        biozoopn15 = biozoopn15 + tsb*(geZ*(rtzoopn15*graz 
+     &       + rtdetrn15*graz_Det + rtzoopn15*graz_Z
+     &       + rtdiazn15*graz_D + rtcoccn15*graz_C 
+     &       + rtdiatn15*graz_Diat + rtdetrn15*graz_Det_B )
+     &       - rtzoopn15*morz - rtzoopn15*graz_Z)
+
+        biodetrn15 = biodetrn15 +tsb*((1.-gamma1)*(rtphytn15*graz 
+     &       + rtdetrn15*graz_Det + (rtzoopn15*graz_Z
+     &       - bapr*rtzoopn15*graz_Z)
+     &       + rtdiazn15*graz_D + rtdiatn15*graz_Diat
+     &       + (rtcoccn15*graz_C - bapr*rtcoccn15*graz_C))
+     &       + rtdiazn15*morp_D + rtdiatn15*morp_Diat
+     &       + (rtcoccn15*morp_C - bapr*rtcoccn15*morp_C)
+     &       + (rtzoopn15*morz - bapr*rtzoopn15*morz)
+     &       + rtphytn15*morp - rtdetrn15*remi - rtdetrn15*graz_Det 
+     &       - rtdetrn15*expo + rn15impo)
+     &       + rtdetrn15*remi_B
+
+        rn15expoout = rn15expoout + rtdetrn15*expo
+
+        biodiats30 = biodiats30 + tsb*(fcassimsi*npp_Diat*redctn*sipr 
+     &   - rtdiats30*redctn*sipr*(morp_Diat + graz_Diat + morpt_Diat))
+
+# endif
+        expoout = expoout + expo
+# if defined O_plastic
+        expompout_a = expompout_a + expomp_a
+        expompout_p = expompout_p + expomp_p
+        agg_uptout = agg_uptout + agg_upt
+        zoop_uptout = zoop_uptout + zoop_upt
+        agg_relout = agg_relout + agg_rel
+        zoop_relout = zoop_relout + zoop_rel
+# endif
+        grazout = grazout + graz
+        morpout = morpout + morp
+        morzout = morzout + morz
+        graz_Det_out = graz_Det_out + graz_Det
+        graz_Zout = graz_Zout + graz_Z
+# if defined O_kk_ballast
+        expoout_B = expoout_B + expo_B
+        remiout_B = remiout_B + remi_B
+        graz_Det_out_B = graz_Det_out_B + graz_Det_B
+# endif
+# if defined O_save_npzd
+        nppout = nppout + npp
+        morptout = morptout + morpt
+        remiout = remiout + remi
+#  if defined O_zoop_det
+        expozout = expozout + expoz
+        remizout = remizout + remiz
+#  endif
+        excrout = excrout + excr
+#  if defined O_npzd_nitrogen && !defined O_npzd_simple
+        npp_Dout = npp_Dout + npp_D
+        graz_Dout = graz_Dout + graz_D
+        morp_Dout = morp_Dout + morp_D
+        nfixout = nfixout + npp_D - no3upt_D
+#  endif
+#  if defined O_npzd_nitrogen && defined O_npzd_simple
+        nfixout = nfixout + npp - no3upt_D
+#  endif
+#  if defined O_npzd_iron
+        expofeout = expofeout + expofe
+        remifeout = remifeout + remife
+#   if defined O_npzd_iron_diagnostics
+        feorgadsout = feorgadsout + feorgads
+#   if defined O_kk_caco3tr
+        feorgadsout_ca = feorgadsout_ca + feorgads_ca
+#   endif
+        deffeout = deffeout + deffe
+        feprimeout = feprimeout + feprime
+        fecolout = fecolout + fecol
+#    if defined O_cal_kk
+        deffeout_C = deffeout_C + deffe_C
+#    endif
+#    if defined O_kk_diat
+        deffeout_Diat = deffeout_Diat + deffe_Diat
+#    endif
+#   endif
+#   if defined O_npzd_chl
+        chlout = chlout + biop * redctn * mc * thetachl
+#    if defined O_npzd_nitrogen && !defined O_npzd_simple
+        chl_D_out = chl_D_out + biodiaz * redctn * mc * thetachl_D
+#    endif
+#    if defined O_cal_kk
+        chl_C_out = chl_C_out + bioc * redctn * mc * thetachl_C
+#    endif
+#    if defined O_kk_diat
+        chl_Diat_out = chl_Diat_out + biodiat*redctn*mc*thetachl_Diat
+#    endif
+#   endif
+#  endif
+#  if defined O_kk_caco3tr
+        calproout = calproout + calpro
+        calattout = calattout + calatt
+        disslout = disslout + dissl
+        expocaco3out = expocaco3out + expocaco3
+#  endif
+#  if defined O_cal_kk
+        npp_Cout = npp_Cout + npp_C
+        graz_Cout = graz_Cout + graz_C
+        morp_Cout = morp_Cout + morp_C
+        morpt_Cout = morpt_Cout + morpt_C
+#  endif
+#  if defined O_kk_diat
+        npp_Diatout = npp_Diatout + npp_Diat
+        graz_Diatout = graz_Diatout + graz_Diat
+        morp_Diatout = morp_Diatout + morp_Diat
+        morpt_Diatout = morpt_Diatout + morpt_Diat
+#  endif
+#  if defined O_npzd_extra_diagnostics
+        avej_out = avej_out + avej
+        avej_D_out = avej_D_out + avej_D
+        gmax_out = gmax_out + gmax
+        no3P_out = no3P_out + no3P
+        po4P_out = po4P_out + po4P
+        po4_D_out = po4_D_out + po4_D
+#  endif
+# endif
+      enddo
+! This becomes the change in the tracer, not the tracer
+      bioout(ibion) = bion - bioin(ibion)
+      bioout(ibiop) = biop - bioin(ibiop)
+      bioout(ibioz) = bioz - bioin(ibioz)
+      bioout(ibiod) = biod - bioin(ibiod)
+#  if defined O_plastic
+!      bioout(ibiompa) = max(0.,biomp_a) - bioin(ibiompa)
+!      bioout(ibiompp) = max(0.,biomp_p) - bioin(ibiompp)
+!      bioout(ibiomp) = max(0.,biomp) - bioin(ibiomp)
+       bioout(ibiompa) = biomp_a - bioin(ibiompa)
+      bioout(ibiompp) = biomp_p - bioin(ibiompp)
+      bioout(ibiomp) = biomp - bioin(ibiomp)
+#  endif
+#  if defined O_zoop_det
+      bioout(ibiodz) = biodz - bioin(ibiodz)
+#  endif
+#  if defined O_npzd_nitrogen
+      bioout(ibiono3) = biono3 - bioin(ibiono3)
+#   if !defined O_npzd_simple
+      bioout(ibiodiaz) = biodiaz - bioin(ibiodiaz)
+#   endif
+#  endif
+#  if defined O_npzd_iron
+      bioout(ibiodfe) = biodfe - bioin(ibiodfe)
+      bioout(ibiodetrfe) = biodetrfe - bioin(ibiodetrfe)
+#  endif
+#  if defined O_cal_kk
+      bioout(ibioc) = bioc - bioin(ibioc)
+#  endif
+#  if defined O_kk_diat
+      bioout(ibiodiat) = biodiat - bioin(ibiodiat)
+#  endif
+#  if defined O_kk_caco3tr
+      bioout(ibiocaco3) = biocaco3 - bioin(ibiocaco3)
+#  endif
+#  if defined O_kk_ballast
+      bioout(ibiod_B) = biod_B - bioin(ibiod_B)
+#  endif
+#  if defined O_isotopes
+      bioout(ibiocaco3c13) = max(trcmin,biocaco3c13)-bioin(ibiocaco3c13)
+      bioout(ibiodic13) = max(trcmin,biodic13) - bioin(ibiodic13)
+      bioout(ibiophytc13) = max(trcmin,biophytc13) - bioin(ibiophytc13)
+      bioout(ibiodiazc13) = max(trcmin,biodiazc13) - bioin(ibiodiazc13)
+      bioout(ibiozoopc13) = max(trcmin,biozoopc13) - bioin(ibiozoopc13)
+      bioout(ibiococcc13) = max(trcmin,biococcc13) - bioin(ibiococcc13)
+      bioout(ibiodiatc13) = max(trcmin,biodiatc13) - bioin(ibiodiatc13)
+      bioout(ibiodetrc13) = max(trcmin,biodetrc13) - bioin(ibiodetrc13)
+
+      bioout(ibiodin15) = max(trcmin,biodin15) - bioin(ibiodin15)
+      bioout(ibiophytn15) = max(trcmin,biophytn15) - bioin(ibiophytn15)
+      bioout(ibiodiazn15) = max(trcmin,biodiazn15) - bioin(ibiodiazn15)
+      bioout(ibiozoopn15) = max(trcmin,biozoopn15) - bioin(ibiozoopn15)
+      bioout(ibiococcn15) = max(trcmin,biococcn15) - bioin(ibiococcn15)
+      bioout(ibiodiatn15) = max(trcmin,biodiatn15) - bioin(ibiodiatn15)
+      bioout(ibiodetrn15) = max(trcmin,biodetrn15) - bioin(ibiodetrn15)
+      bioout(ibiodiats30) = max(trcmin,biodiats30) - bioin(ibiodiats30)
+#  endif
+#endif
+      return
+      end

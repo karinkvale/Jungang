@@ -1,0 +1,9 @@
+ ! NOAA/PMEL TMAP
+ ! PyFerret v7.63 (optimized)
+ ! Darwin 19.6.0 - 09/02/21
+ ! 11-Mar-22 09:31     
+
+set mode verify
+use A_co2.nc
+list A_co2
+exit

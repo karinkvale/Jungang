@@ -1,0 +1,12 @@
+ ! NOAA/PMEL TMAP
+ ! FERRET v6.82  
+ ! Linux 2.6.32-279.1.1.el6.x86_64 64-bit - 08/03/12
+ ! 20-Oct-17 15:33     
+
+use/order=xytz step2.nc
+
+use O_temp.nc
+
+let O_SILDEP = dustdep[d=1,g=o_temp[d=2,k=1]]+o_temp[d=2,k=1]*0
+
+save/file=O_sil_dep.nc O_SILDEP

@@ -1,0 +1,20 @@
+
+! 1/3 deg bathymetry data comes with ferret
+use etopo20
+let mrose = rose[d=etopo20]
+let one = rose[d=etopo20]*0+1
+
+set memory/size=100
+
+! load climate model grid
+use G_grid.nc
+set axis/modulo longitude
+
+define grid/x=longitude/y=latitude/z=depth mg
+
+let om = if (mrose lt 0) then one else 0 !make a mask of hi-res depths
+let/title="Sub-grid scale ocean mask" sgom = om[gx=mg@ave,gy=mg@ave] 
+
+save/file=sg_ocean_mask.nc/k=1/klimits=1:19 sgom
+
+

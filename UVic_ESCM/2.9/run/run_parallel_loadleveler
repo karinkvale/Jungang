@@ -1,0 +1,296 @@
+
+unless ( $Executable_Directory ) { exit }
+unless ( $Executable_File ) { exit }
+unless ( $Machine_Name ) { $Machine_Name = " " }
+unless ( $Notify_User ) { $Notify_User = " " }
+unless ( $End_String ) { $End_String = " " }
+# set default (may be site specific) and change mount point
+unless ( $Change_Mount ) { $Change_Mount = "/home1m/weaver/ /home/" }
+if ( $Change_Mount ) {
+ if ($Executable_Directory) {
+  $Executable_Directory = change_mount ($Executable_Directory, $Change_Mount);
+ }
+ if ($Executable_File) {
+  $Executable_File = change_mount ($Executable_File, $Change_Mount);
+ }
+ if ($Output_File) {
+  $Output_File = change_mount ($Output_File, $Change_Mount);
+ }
+ if ($Input_File) {
+  $Input_File = change_mount ($Input_File, $Change_Mount);
+ }
+}
+unless ( -e $Executable_Directory ) { exit }
+chdir $Executable_Directory;
+$Run_File = "$Executable_File.run";
+$Submit_File = "$Executable_File.cmd";
+
+#-------------------------------------------------------------------------------
+# parallel loadleveler submit file (this section may be site specific)
+#-------------------------------------------------------------------------------
+
+if ($Nice) { undef $Nice }
+unless ( $Number_Processors ) { exit }
+$Submit_Command = "/usr/lpp/LoadL/full/bin/llsubmit";
+$a[0] = "#!/bin/sh\n";
+$a[1] = "# @ shell = /bin/sh\n";
+$a[2] = "ulimit -s unlimited\n";
+$a[3] = "# @ executable = $Run_File\n";
+$a[4] = "# @ input = /dev/null\n";
+$a[5] = "# @ output = $Output_File\n";
+$a[6] = "# @ error = $Output_File\n";
+$a[7] = "# @ initialdir = $Executable_Directory\n";
+if ( $Notify_User ne " " ) { $a[8] =  "# @ notify_user = $Notify_User\n" }
+$a[9] = "# @ class = p2\n";
+$a[10] =  "# @ job_type = parallel\n";
+$a[11] = "# @ node = 1\n";
+$a[12] = "# @ tasks_per_node = $Number_Processors\n";
+$a[13] = "# @ environment = OMP_DYNAMIC=FALSE; OMP_NUM_THREADS=$Number_Processors\n";
+$a[14] = "# @ notification = complete\n";
+$a[15] = "# @ checkpoint = no\n";
+$a[16] = "# @ restart = yes\n";
+$a[17] = "# @ queue\n";
+# set critical commands (should not be changed in the submit file)
+$c[0] = $a[3];
+$c[1] = $a[5];
+$c[2] = $a[6];
+$c[3] = $a[7];
+$c[4] = $a[10];
+$c[5] = $a[11];
+$c[6] = $a[12];
+$c[7] = $a[13];
+
+#-------------------------------------------------------------------------------
+# end of parallel loadleveler submit file
+#-------------------------------------------------------------------------------
+
+unless ( -e $Submit_File ) {
+# write submit file
+ open OUT, ">$Submit_File";
+ foreach (@a) { if ( $_ ) { print OUT "$_" } }
+ close OUT;
+}
+
+# check critical commands
+open IN, "$Submit_File"; while (<IN>) { push ( @b, $_) }; close IN;
+$m = 0;
+foreach $C (@c) {
+ if ( $C ) {
+  chomp($C);
+  $n = 0; 
+  foreach $B (@b) {
+   if ( $B ) {
+    chomp($B);
+    if ($C eq $B) { $n++ }
+   }
+  }
+  if ( $m == 0 and $n == 0 ) {
+   print "Critical run setting not consistent with $Submit_File\n";
+  }
+  if ( $n == 0 ) { print "Expecting: $C\n"; $m++ }
+ }
+}
+if ( $m > 0 ) { exit }
+if ( $m > 0 ) { unlink $Run_File; exit }
+
+# resubmit if argument is "q" or stop if argument is "s"
+if ( $ARGV[0] ) {
+ system "chmod +x $Submit_File"; 
+ if ( $ARGV[0] eq "q" ) { system "$Submit_Command $Submit_File" }
+ if ( $ARGV[0] eq "s" ) { unlink $Run_File }
+ exit;
+}
+
+use File::Copy;
+
+if ( $Input_File ) {
+ undef @in;
+ open IN,"$Input_File";
+ while (<IN>) {
+  chomp $_;
+# read the runstep and runlen from the input file
+  if ( /runstep/ ) { 
+   $runstep = $_; $runstep =~ s/.*runstep//; $runstep =~ s/=//;
+   $runstep =~ s/^\s+//; $runstep =~ s/,.*//; $runstep =~ s/ .*//;
+   $runstep =~ s/\/.*//;
+  }
+  if ( /runlen/ ) {
+   $runlen = $_; $runlen=~ s/.*runlen//; $runlen =~ s/=//; $runlen =~ s/^\s+//; 
+   $runlen =~ s/,.*//; $runlen =~ s/ .*//; $runlen =~ s/\/.*//;
+  }
+  push ( @in, "$_\n" );
+ }
+ close IN;
+}
+else {
+ $runlen = 1;
+ $runstep = 1;
+}
+if ( $runstep <= 0) { $runstep = $runlen }
+
+if ( $runlen > 0) {
+
+# modify the control file to always write restarts
+
+ if ( $Input_File ) {
+  if ( $runlen > $runstep ) {
+   $a = "$Input_File.run";
+   if ( ! -e $a ) { copy $Input_File, $a }
+   open OUT, ">$Input_File";
+   foreach (@in) {
+    s/ restrt=\.false\./ restrt=\.true\./;
+    s/,restrt=\.false\./,restrt=\.true\./;
+    print OUT "$_";
+   }
+   close OUT;
+  }
+ }
+ 
+# if a step_start_file exists then run it
+ if ( $Step_Start_File ) {
+  if ( -e $Step_Start_File ) {
+   unless ( -x $Step_Start_File ) { system "chmod +x $Step_Start_File" }
+   system "$Step_Start_File";
+  }
+ }
+
+#-------------------------------------------------------------------------------
+# run the executable
+#-------------------------------------------------------------------------------
+
+ if ( $Run_Directory ) { if ( ! -e $Run_Directory ) { undef $Run_Directory } }
+ if ( $Run_Directory ) {
+  unless ( $User ) { $User = $ENV{"USER"} }
+  if ( $User ) { $Run_Directory = "$Run_Directory/$User" }
+  system "mkdir -p $Run_Directory/$Executable_Directory";
+  chdir "$Run_Directory/$Executable_Directory";
+  system "rm -f $Run_Directory/$Executable_Directory/*";
+  if ( -e "$Executable_File" ) { system "cp -f $Executable_File ." }
+  if ( -e "$Input_File" ) { system "cp -f $Input_File ." }
+  if ( $Run_Copy ) {
+   foreach (split " ", $Run_Copy) {
+    if ( -e "$Executable_Directory/$_" ) {
+     system "cp -rf $Executable_Directory/$_ ."
+    }
+    if ( index ( "/", $_ ) >= 0 && -e $_ ) { system "cp -rf $_ ." }
+   }
+  }
+  $a = "$Run_Directory/$Executable_File";
+  if ( $Nice ) { $a = "nice $Nice $a" }
+  if ( $Output_File ) {
+   system "rm -f $Run_Directory/$Output_File";
+   $a = "$a > $Run_Directory/$Output_File";
+  }
+  system "$a 2>&1";
+  system "cp -rf * $Executable_Directory";
+  chdir $Executable_Directory;
+  system "rm -rf $Run_Directory/$Executable_Directory";
+ }
+ else {
+  $a = "$Executable_File";
+  if ( $Nice ) { $a = "nice $Nice $a" }
+  if ( $Output_File ) {
+   system "rm -f $Output_File";
+   $a = "$a > $Output_File";
+  }
+  system "$a 2>&1";
+ }
+
+# if a step_end_file exists then run it
+ if ( $Step_End_File ) {
+  if ( -e $Step_End_File ) {
+   unless ( -x $Step_End_File ) { system "chmod +x $Step_End_File" }
+   system "$Step_End_File";
+  }
+ }
+ 
+ if ( $Output_File ) {
+# add output_file to output_file.run
+  undef @in; undef $a;
+  open IN,"$Output_File";
+  while (<IN>) { push ( @in, "$_" ); chomp; if ( $_ ) { $a = $_ } }
+  close IN;
+# check model completed correctly
+  if ($End_String && $a ) { if ( index ( $a, $End_String ) < 0 ) { exit } }
+  open OUT, ">>$Output_File.run";
+  foreach (@in) { $a = print OUT "$_"; if ($a == 0) { exit } };
+  close OUT;
+ }
+
+# read the runlen from the input file
+ if ( $Input_File ) {
+  undef @in;
+  open IN,"$Input_File";
+  while (<IN>) {
+   chomp $_;
+   if ( /runstep/ ) { 
+    $runstep = $_; $runstep =~ s/.*runstep//; $runstep =~ s/=//;
+    $runstep =~ s/^\s+//; $runstep =~ s/,.*//; $runstep =~ s/ .*//;
+    $runstep =~ s/\/.*//;
+   }
+   if ( /runlen/ ) {
+    $runlen = $_; $runlen=~ s/.*runlen//; $runlen =~ s/=//; $runlen =~ s/^\s+//; 
+    $runlen =~ s/,.*//; $runlen =~ s/ .*//; $runlen =~ s/\/.*//;
+   }
+  }
+  close IN;
+ }
+ 
+ if ( $runstep <= 0) { $runstep = $runlen }
+
+# check for resubmition
+ if ( $Input_File && $runlen - $runstep > 0 ) {
+# modify input file for next step
+  undef @in;
+  open IN,"$Input_File"; while (<IN>) { push ( @in, "$_" ) }; close IN;
+ 
+  $a = "$Input_File.run";
+  if ( ! -e $a ) { copy $Input_File, $a }
+  open OUT, ">$Input_File";
+  foreach (@in) {
+   s/ init=\.true\./ init=\.false\./;
+   s/,init=\.true\./,init=\.false\./;
+   s/ init_time=\.true\./ init_time=\.false\./;
+   s/,init_time=\.true\./,init_time=\.false\./;
+   s/ init_time_in=\.true\./ init_time_in=\.false\./;
+   s/,init_time_in=\.true\./,init_time_in=\.false\./;
+   s/ init_time_out=\.true\./ init_time_out=\.false\./;
+   s/,init_time_out=\.true\./,init_time_out=\.false\./;
+   $a = $runlen - $runstep;
+   s/runlen=$runlen/runlen=$a/;
+   print OUT "$_";
+  }
+  close OUT;
+# resubmit the job
+  system "$Submit_Command $Submit_File"
+ }
+ else {
+# clean up files
+  if ( $Input_File ) {
+   if ( -e "$Input_File.run" ) { system "mv $Input_File.run $Input_File" }
+  }
+  if ( $Output_File ) {
+   if ( -e "$Output_File.run" ) { system "mv $Output_File.run $Output_File" }
+  }
+  if ( -e "$Run_File" ) { unlink $Run_File }
+ }
+}
+
+#*******************************************************************************
+# subroutine change_mount
+#*******************************************************************************
+# change mount point of directory or file
+sub change_mount {
+ my $fi; my $fo; my $mp1; my $mp2; my $file; my $dir;
+ $fi = $_[0]; $fo = $fi;
+ ( $mp1, $mp2 ) = split " ", $_[1];
+ unless ( $mp2 ) { $mp2 = $mp1; $mp1 = "/" }
+ if ( $mp1 ) { $fo =~ s/^$mp1/$mp2/ }
+ $dir = $fo;
+ if ( ! -d $dir ) {
+  $file = $dir; $file =~ s/.*\///; $dir =~ s/\/$file//;
+ }
+ if ( ! -d $dir ) { $fo = $fi }
+ $fo =~ s/\s+//g;
+ $fo;
+}

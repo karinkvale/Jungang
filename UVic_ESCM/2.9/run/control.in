@@ -1,0 +1,40 @@
+ &contrl init=.false., runlen=365000., rununits='days',
+         restrt=.true., runstep=36500 /
+ &tsteps dtts=108000., dtuv=1125., dtsf=1125.,
+         dtatm=54000., namix=10, segtim=5. /
+ &riglid mxscan=200, sor=1.60, tolrsf=5.e8, tolrsp=1.e-4,
+         tolrfs=1.e-4 /
+ &mixing am=1.5e9, ah=8.e6, ahbkg=0., ambi=1.e23, ahbi=5.e22,
+         kappa_m=10., kappa_h=0.1, aidif=0.5, nmix=16,
+         eb=.false.,  ncon=1, cdbot=1.3e-3, acor=0.,
+         dampts=30.,60.,
+         dampdz=50.e2,50.e2 /
+ &diagn  tsiint=365., tsiper=365.,
+         timavgint=36500., timavgper=365.,
+         restint=36500., 
+         tavgint=-365000., itavg=.true., tmbint=-365000., itmb=.true.,
+         trmbint=-365000., itrmb=.true., tbtint=-365000., tbtper=-365.,
+         glenint=-365000., vmsfint=-365000., stabint=-365000.,
+         zmbcint=-365000., gyreint=-365000.,  extint=-365000.,
+         prxzint=-365000., dspint=-365000., trajint=-365000.,
+         xbtint=-365000.  /
+ &io     expnam=' ',
+         iotavg=6, iotmb=6, iotrmb=6, iozmbc=6, ioglen=6, iovmsf=6,
+         iogyre=6, ioprxz=6, ioext=6, iodsp=6, iotsi=-1, iotraj=6,
+         ioxbt=6, mrot=1, jsot=65, jeot=90, ksot=3, keot=17/
+ &ictime eqyear=.true., eqmon=.false., refinit=.true., refrun=.false.
+         init_time_in=.false., init_time_out=.false.,
+         year0=1800, month0=1,day0=1, hour0=0, min0=0, sec0=0 /
+ &blmix  AHV=0.6/
+ &hlmix  /
+ &isopyc slmx=0.01, ahisop=8.e6, athkdf=8.e6, del_dm=0.4e-02, s_dm=0.1e-2 /
+ &ppmix  /
+ &smagnl /
+ &embm   /
+ &carbon /
+ &paleo  pyear=1800. /
+ &ice    /
+ &veg    /
+ &mtlm   /
+ &npzd   /
+ &sed    /

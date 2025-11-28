@@ -1,0 +1,175 @@
+# Ifdef preprocessor options for the "UVic_Kiel_2016" configuration 
+
+### Add your directory path here:
+Version_Directory = /Users/karink/UVic_ESCM/2.9
+
+Model_Options =
+
+#O_matrix
+#O_time_averages_monthly_continuous
+#O_idealized_bgc_ic
+#O_tmm_bgc_ic
+#O_idealage
+#O_plastic
+
+
+### options common to all models 
+O_even_fluxes
+O_read_my_kmt 
+O_read_my_grid 
+O_cyclic
+O_time_averages
+O_time_step_monitor
+O_sbc_in_memory
+O_fourfil
+O_constant_flux_reference
+#O_idealized_ic
+
+### atmosphere model options 
+O_embm
+O_embm_mgrid
+
+### sea-ice model options 
+O_ice
+O_ice_evp  
+O_ice_fourfil
+#O_correct_ice_to_ocean_stress
+
+### land and vegetation model options 
+O_mtlm
+O_mtlm_segday
+
+### ocean model options
+O_mom
+O_ramdrive 
+O_conjugate_gradient 
+O_sf_5_point
+O_stream_function
+O_consthmix 
+O_constvmix 
+O_fullconvect
+#O_global_sums
+O_save_convection
+O_stability_tests
+O_gyre_components 
+O_term_balances
+O_energy_analysis 
+O_meridional_overturning
+O_tracer_averages
+O_gent_mcwilliams
+O_isopycmix 
+#O_quicker
+#O_ncar_upwind3
+O_fct
+O_npzd
+O_npzd_alk
+O_npzd_nitrogen
+O_npzd_no_vflux
+O_npzd_o2
+O_save_npzd
+O_tidal_kv
+O_highmix_Southern_Ocean
+O_anisotropic_viscosity
+O_zoop_graz_upper_temp_limit
+O_zoop_det
+O_increase_isopyc_diff
+O_increase_isopyc_diff_smooth
+#O_increase_isopyc_diff_everywhere
+#O_kk_diat
+#O_kk_si_compensating_sources
+#O_kk_variable_sipr
+#O_kk_si
+O_cal_kk
+O_kk_caco3tr
+O_kk_ballast
+#O_npzd_iron
+O_npzd_fe_limitation
+#O_npzd_iron_diagnostics
+O_npzd_subgridbathy
+#O_npzd_cdom_attenuation
+O_npzd_extra_diagnostics
+
+### sediment model options (need source_sed and source_mom)
+#O_sed
+#O_sed_weath_diag
+#O_sed_uncoupled
+#O_sed_constrain_rainr
+
+### carbon options 
+O_carbon
+O_carbon_14
+#O_carbon_14_coupled
+O_save_carbon_carbonate_chem
+O_save_carbon_totals
+
+### forcing data options 
+#O_co2ccn_user
+O_co2ccn_data
+O_agric_data
+O_landice_data
+O_solar_data
+
+### transient forcing data options (need source_data)
+#O_co2ccn_data_transient
+#O_co2emit_data_transient
+#O_crop_data_transient
+#O_landice_data_transient
+#O_solar_data_transient
+#O_orbit_transient
+#O_volcano_data_transient
+#O_sulphate_data_transient
+#O_aggfor_data_transient
+#O_cfcs_data_transient
+#O_c14ccn_data_transient
+#O_co2emit_diag
+
+### time step integral file options
+O_tai_otsf
+O_tai_ns
+O_tai_lo
+O_tai_slh
+O_tai_rad
+
+### units
+O_units_temperature_Celsius
+O_units_time_years
+O_save_time_relyear0
+
+### source code directories 
+Source_Directory(1) = updates
+Source_Directory(2) = /Users/karink/UVOK_1.1/Kiel_Feb_2019/source/common
+Source_Directory(3) = /Users/karink/UVOK_1.1/Kiel_Feb_2019/source/embm
+Source_Directory(4) = /Users/karink/UVOK_1.1/Kiel_Feb_2019/source/ice
+Source_Directory(5) = /Users/karink/UVOK_1.1/Kiel_Feb_2019/source/mom
+Source_Directory(6) = /Users/karink/UVOK_1.1/Kiel_Feb_2019/source/sed
+Source_Directory(7) = updates/02/source/common
+Source_Directory(8) = updates/02/source/netcdf
+Source_Directory(9) = updates/02/source/embm
+Source_Directory(10) = updates/02/source/ice
+Source_Directory(11) = updates/02/source/mtlm
+Source_Directory(12) = updates/02/source/mom
+Source_Directory(13) = updates/02/source/sed
+Source_Directory(14) = source/common
+Source_Directory(15) = source/netcdf
+Source_Directory(16) = source/embm
+Source_Directory(17) = source/ice
+Source_Directory(18) = source/mtlm
+Source_Directory(19) = source/mom
+Source_Directory(20) = source/sed
+
+### miscellaneous settings
+Executable_File = 1851_spinup
+Input_File = control.in
+Output_File = pr
+Code_Directory = code
+Data_Directory = data
+Updates_Level = latest
+
+Libraries_Directory = /usr/local/homebrew/lib 
+Libraries = -lnetcdf -lnetcdff
+Preprocessor = cpp-11 -P -C -traditional-cpp
+Compiler_F = gfortran -O3 -fdefault-real-8 -fdefault-double-8 -fallow-argument-mismatch -g -c
+Compiler_f = gfortran -O3 -fdefault-real-8 -fdefault-double-8 -fallow-argument-mismatch -g -c
+Compiler_F90 = gfortran -O3 -fdefault-real-8 -fdefault-double-8 -fallow-argument-mismatch -g -c
+Compiler_f90 = gfortran -O3 -fdefault-real-8 -fdefault-double-8 -fallow-argument-mismatch -g -c
+Linker = gfortran -O3 -fdefault-real-8 -fdefault-double-8 -fallow-argument-mismatch -g -o

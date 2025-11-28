@@ -1,0 +1,58 @@
+% First get the template file (mask from Eriksen or co2dist) read in
+
+%ncid = netcdf.open('O_plastic.nc_eriksen');
+ncid = netcdf.open('F_co2dist.nc');
+
+%varid = netcdf.inqVarID(ncid,'O_PLASTIC');
+varid = netcdf.inqVarID(ncid,'F_co2dist');
+%data = netcdf.getVar(ncid,7);
+data = netcdf.getVar(ncid,0);
+netcdf.close(ncid);
+
+
+% clean out nans for Eriksen
+%ref = data;
+%ref(data<0) = NaN;
+
+plast = zeros([100 100 150]);
+
+% For Eriksen data
+%plast(:,:,1) = 0.;
+%plast(:,:,60) = ref;
+%delr = plast(:,:,60)./60;
+
+%for x=2:1:150
+%	plast(:,:,x) = plast(:,:,x-1)+delr;
+%end
+ 
+%for x=61:1:150
+%	plast(:,:,x) = plast(:,:,x-1)*1.084;
+%end
+
+% For co2dist data
+% Use estimate of all plastic produced from Geyer et al. 2017
+% Compound growth in production of 8.4%/y
+mp = 2.;
+for x = 2:1:150
+    mp(x) = mp(x-1)*1.084;
+end
+% convert MT to particles using mass conversion from Eriksen et al. (2014)
+% 355.4E8 gMP = 485E10 particles
+% And per year to per second
+mp = mp.*1e6.*485e10./355.4e8./365./24./60./60;
+
+% Now distribute spatially according to F_co2dist
+for x = 1:1:150
+    plast(:,:,x) = mp(x).*data(:,:,11);
+end
+
+ncid = netcdf.create('newfile.nc', 'NOCLOBBER');
+dimid = netcdf.defDim(ncid, 'time', 151);
+ncdf_time = netcdf.defVar(ncid, 'time', 'float', dimid);
+ncdf_mp = netcdf.defVar(ncid, 'O_plastic','float',dimid);
+varid = netcdf.getConstant('Global');
+
+netcdf.endDef(ncid);
+
+netcdf.putAtt(ncid, varid, 'title', 'MP flux');
+

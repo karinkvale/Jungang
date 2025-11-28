@@ -1,0 +1,81 @@
+! modified from Chris Somes sub-grid mask script
+
+! 1/3 deg bathymetry data comes with ferret
+use etopo20
+let mrose = rose[d=etopo20]
+let one = rose[d=etopo20]*0+1 !make a mask
+
+set memory/size=100
+
+! load climate model grid
+use tavg.00002.01.01.nc
+
+set axis/modulo longitude
+
+define grid/like=o_dic[d=2]/t=mrose[d=1] mg
+
+!make a mask of hi-res depths using UVic depth level info
+
+let om1 = if (mrose le 0) then one else 0 
+let om2 = if (mrose le -50) then one else 0
+let om3 = if (mrose le -130) then one else 0
+let om4 = if (mrose le -240) then one else 0
+let om5 = if (mrose le -380) then one else 0
+let om6 = if (mrose le -550) then one else 0
+let om7 = if (mrose le -750) then one else 0
+let om8 = if (mrose le -980) then one else 0
+let om9 = if (mrose le -1240) then one else 0
+let om10 = if (mrose le -1530) then one else 0
+let om11 = if (mrose le -1850) then one else 0
+let om12 = if (mrose le -2200) then one else 0
+let om13 = if (mrose le -2580) then one else 0
+let om14 = if (mrose le -2990) then one else 0
+let om15 = if (mrose le -3430) then one else 0
+let om16 = if (mrose le -3900) then one else 0
+let om17 = if (mrose le -4400) then one else 0
+let om18 = if (mrose le -4930) then one else 0
+let om19 = if (mrose le -5490) then one else 0
+
+
+let sgom1=om1[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom2=om2[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom3=om3[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom4=om4[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom5=om5[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom6=om6[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom7=om7[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom8=om8[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom9=om9[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom10=om10[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom11=om11[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom12=om12[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom13=om13[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom14=om14[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom15=om15[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom16=om16[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom17=om17[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom18=om18[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+let sgom19=om19[gx=mg@ave,gy=mg@ave,gz=mg@asn]
+
+let sgomA = zcat(sgom1[k=1],sgom2[k=2])
+let sgomB=zcat(sgomA,sgom3[k=3])
+let sgomC=zcat(sgomB,sgom4[k=4])
+let sgomD=zcat(sgomC,sgom5[k=5])
+let sgomE=zcat(sgomD,sgom6[k=6])
+let sgomF=zcat(sgomE,sgom7[k=7])
+let sgomG=zcat(sgomF,sgom8[k=8])
+let sgomH=zcat(sgomG,sgom9[k=9])
+let sgomI=zcat(sgomH,sgom10[k=10])
+let sgomJ=zcat(sgomI,sgom11[k=11])
+let sgomK=zcat(sgomJ,sgom12[k=12])
+let sgomL=zcat(sgomK,sgom13[k=13])
+let sgomM=zcat(sgomL,sgom14[k=14])
+let sgomN=zcat(sgomM,sgom15[k=15])
+let sgomO=zcat(sgomN,sgom16[k=16])
+let sgomP=zcat(sgomO,sgom17[k=17])
+let sgomQ=zcat(sgomP,sgom18[k=18])
+let SGB=zcat(sgomQ,sgom19[k=19])
+let/title="Sub-grid scale ocean mask" SUBGRID_BATHY=1-SGB 
+save/file=G_subgrid_bathy.nc/klimits=1:19 SUBGRID_BATHY
+
+

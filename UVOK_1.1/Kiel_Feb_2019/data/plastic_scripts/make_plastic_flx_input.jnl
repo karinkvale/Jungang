@@ -1,0 +1,19 @@
+! Script to produce a MP flux file for the model based on F_co2dist.nc
+! First use plastic.m to produce the increasing plastic flux file newfile.nc
+
+set memory/size=100
+
+use "newfile.nc"
+use "tavg.01951.01.01.nc"
+
+! According to Geyer et al 2017 global plastic production rose from
+! 2 MT in year 150 to 380 MT in 2015 at a rate of 8.4%/y
+! continue trend to 2100
+
+!This is a sloppy script and units were already converted in the
+! Matlab file, but inventory must agree w/Geyer et al.
+! So pretend the incoming o_mp units are Tons/y
+! Convert to particles per s
+let o_plastic= o_mp[d=1,g=o_temp[d=2,l=1:150]@asn]*G_mskt[d=2]*1e6*485e10/355.4e8/365/24/60/60
+
+save/file=O_plastic.nc O_plastic
